@@ -1,0 +1,13 @@
+solace-messaging-skills
+Copyright 2026 Solace Corporation
+
+This product's code (the skills, tools, manifests, and samples) is licensed under
+the Apache License, Version 2.0. See the LICENSE file in the repository root.
+
+The skills/solace-application-development/ skill bundles no documentation; it reads the
+public Solace documentation live from https://docs.solace.com/ on demand. The
+skills/solace-topic-architecture-best-practices/ skill bundles no documentation; it reads
+the public Solace documentation live from https://docs.solace.com/ on demand. The
+referenced documentation remains the copyrighted material of Solace Corporation and is
+governed by its own terms at the source, not by the Apache License, Version 2.0 that
+governs the code above.

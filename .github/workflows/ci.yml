@@ -1,0 +1,125 @@
+name: ci
+
+# Parallel quality gates (D-16). No `needs:` between jobs so branch
+# protection on `main` can require each independently:
+#   validate:      CI-01: gh skill publish --dry-run + claude plugin validate (marketplace root)
+#   link-check:    CI-02: the tools/check-links.sh sweep
+#   compile-check: EVAL-02 compile the baked JCSMP samples verbatim
+#   trigger-evals: lightweight skill-triggering check; self-skips green without a key
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:        # manual run
+
+# The workflow only reads the repo. `gh skill publish` WITHOUT --dry-run
+# creates a real GitHub release; read-only permissions make a dropped or
+# typo'd flag structurally harmless.
+permissions:
+  contents: read
+
+# Supersede stacked runs on the same ref: each trigger-evals leg spends real
+# API budget, so consecutive pushes cancel the previous run instead of queuing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # CI-01: validate every skill against the Agent Skills spec via the gh CLI's
+  # built-in publish command in dry-run mode (Public Preview since gh 2.90;
+  # the runner image's preinstalled gh is recent enough). It discovers
+  # plugins/{scope}/skills/*/SKILL.md on its own, so new skills are covered
+  # automatically. Spec violations (naming rules, name/directory match,
+  # missing description) exit non-zero; recommended-field notes such as a
+  # missing license are warnings only. Also validate the Claude
+  # plugin/marketplace manifests.
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate skills against the Agent Skills spec (gh skill publish dry run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh skill publish --dry-run
+      # Validate the Claude plugin/marketplace manifests from the marketplace root (".").
+      - name: claude plugin validate (marketplace root)
+        run: claude plugin validate . --strict
+
+  # CI-02: sweep the plugins/ tree for broken and soft-404 documentation links.
+  link-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Link-check the plugins tree
+        run: ./tools/check-links.sh plugins
+
+  # EVAL-02: compile the baked JCSMP samples verbatim against the live-resolved
+  # sol-jcsmp. Pure compile gate, no API budget and no credential.
+  compile-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
+          cache: maven
+      - name: Compile baked samples (EVAL-02 hard gate)
+        run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/compile-fixture/compile.sh
+
+  # Lightweight skill-triggering check. For every case in each plugin's
+  # evals/trigger-evals.json, run the prompt with only that plugin loaded and
+  # assert whether the target skill fired (best-of-3 per case); a leg passes
+  # when at least 90% of its cases match their expectation and no must-pass
+  # case fails. Runs once per model (the latest haiku and sonnet) as
+  # independent checks, so a weak skill on one model is visible on its own
+  # leg. Self-skips GREEN when the ANTHROPIC_API_KEY secret is absent (HAS_KEY
+  # guard), so a missing key (including fork PRs, which receive no secrets)
+  # never turns the check red; the warning step keeps the skip visible in the
+  # run summary. The secret is legal in the job env but illegal in a job-level
+  # if, so the guard reads HAS_KEY at step level and the real key is scoped to
+  # the run step only.
+  trigger-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120                  # per model leg; 57 cases x 3 runs (~50 min observed)
+    strategy:
+      fail-fast: false                    # each model is an independent check
+      matrix:
+        model: [claude-haiku-4-5, claude-sonnet-5]
+    env:
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - name: Warn when skipped (no ANTHROPIC_API_KEY)
+        if: env.HAS_KEY != 'true'
+        run: echo "::warning::trigger-evals self-skipped, the ANTHROPIC_API_KEY secret is not configured; this green check asserted nothing"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: env.HAS_KEY == 'true'
+        with:
+          node-version: 20
+      - name: Install Claude Code CLI
+        if: env.HAS_KEY == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run trigger evals for ${{ matrix.model }}
+        if: env.HAS_KEY == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TRIGGER_EVAL_WORKDIR: ${{ runner.temp }}/trigger-evals
+        run: ./tools/run-trigger-evals.sh --model ${{ matrix.model }}
+      # The runner keeps transcripts and per-run stderr only on failure; the
+      # runner VM is destroyed, so upload them where they can be inspected.
+      - name: Upload transcripts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trigger-eval-transcripts-${{ matrix.model }}
+          path: ${{ runner.temp }}/trigger-evals
+          if-no-files-found: ignore

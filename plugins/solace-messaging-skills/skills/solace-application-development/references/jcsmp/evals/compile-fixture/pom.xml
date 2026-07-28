@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    EVAL-02 compile-fixture template. Compiles the two baked JCSMP reference
+    samples (GuaranteedPublisher / GuaranteedSubscriber) VERBATIM against the
+    latest sol-jcsmp resolved live from Maven Central. This pom only compiles;
+    it never runs the samples, so it declares no run/exec plugin.
+
+    The sol-jcsmp version is intentionally version-free here (Invariant 3): the
+    property default below is a NON-NUMERIC placeholder token that compile.sh
+    overrides at run time with the live <release> from Maven Central metadata.
+    No sol-jcsmp version number is committed anywhere. log4j2 is the deliberate
+    pinned exception (2.26.0, at/above the 2.17.1 Log4Shell floor).
+  -->
+
+  <groupId>com.solace.samples</groupId>
+  <artifactId>jcsmp-compile-fixture</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>11</maven.compiler.release>
+    <!-- Overridden by compile.sh via -Dsol.jcsmp.version=<live release>.
+         The default is a placeholder token, never a committed version number. -->
+    <sol.jcsmp.version>RESOLVED_AT_GENERATION_TIME</sol.jcsmp.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.solacesystems</groupId>
+      <artifactId>sol-jcsmp</artifactId>
+      <version>${sol.jcsmp.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-api</artifactId>
+      <version>2.26.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <version>2.26.0</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>11</release>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
