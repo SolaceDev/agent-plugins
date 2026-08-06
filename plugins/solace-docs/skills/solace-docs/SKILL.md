@@ -1,6 +1,6 @@
 ---
 name: solace-docs
-description: "Use when the user wants to look up, find, quote, check, or read a specific page of the Solace documentation (any docs.solace.com page). Do NOT trigger to build, design, or generate a Solace application or JCSMP code (use solace-application-development)."
+description: "Use when the user wants to look up, find, quote, check, or read a specific page of the Solace documentation (any docs.solace.com page), or asks what the official Solace docs say about a feature. Do NOT trigger to build, design, generate, or advise on implementing a Solace application or JCSMP code, even when answering would involve consulting documentation (use solace-application-development). Do NOT trigger for topic-hierarchy design or topic-naming questions (use solace-topic-best-practices)."
 allowed-tools: Read Grep WebFetch
 ---
 
@@ -20,4 +20,4 @@ Grep the sitemap to narrow first, then WebFetch a single page. Do not WebFetch b
 
 ## What this skill is not
 
-Do not use this skill to design, build, or generate a Solace application or JCSMP code. That is the solace-application-development skill.
+Do not use this skill to design, build, generate, or advise on implementing a Solace application or JCSMP code, even when the answer would come from documentation. That is the solace-application-development skill. Topic-hierarchy design and topic-naming questions belong to the solace-topic-best-practices skill.
