@@ -1,0 +1,10 @@
+{
+  "name": "solace-docs",
+  "description": "Solace documentation lookup. Includes solace-docs (locates the right docs.solace.com page from a bundled sitemap and reads the current page online as Markdown, so answers quote the live Solace documentation instead of model memory)",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Solace"
+  },
+  "skills": "./skills/"
+}

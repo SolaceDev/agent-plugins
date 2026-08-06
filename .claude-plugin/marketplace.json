@@ -9,6 +9,11 @@
       "name": "solace-messaging-skills",
       "source": "./plugins/solace-messaging-skills",
       "description": "Skills for building applications on the Solace platform. Includes solace-application-development (designs and generates Solace messaging code grounded in canonical Solace docs), solace-topic-best-practices (looks up the canonical Topic Architecture Best Practices page online for topic-hierarchy questions), and solace-messaging-feedback (formats a session into copy-paste-ready feedback routed to the Solace Ideas portal, Solace Support, or the Solace Community)"
+    },
+    {
+      "name": "solace-docs",
+      "source": "./plugins/solace-docs",
+      "description": "Solace documentation lookup. Includes solace-docs (locates the right docs.solace.com page from a bundled sitemap and reads the current page online as Markdown, so answers quote the live Solace documentation instead of model memory)"
     }
   ]
 }

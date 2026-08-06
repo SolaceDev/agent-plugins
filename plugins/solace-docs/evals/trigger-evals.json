@@ -1,0 +1,19 @@
+[
+  {"skill":"solace-docs","prompt":"Point me to the Solace docs that explain the difference between direct and guaranteed messaging. I just want to read about it.","should_trigger":true,"must_pass":true},
+  {"skill":"solace-docs","prompt":"What does the current Solace documentation say about message replay on the software broker? Quote the relevant page.","should_trigger":true,"must_pass":true},
+  {"skill":"solace-docs","prompt":"Find the docs.solace.com page about configuring a client profile and tell me which settings limit the number of connections.","should_trigger":true},
+  {"skill":"solace-docs","prompt":"I have this link https://docs.solace.com/API/Messaging-APIs/JCSMP-API/jcsmp-api-home.htm. Can you read the page and summarize the key points?","should_trigger":true},
+  {"skill":"solace-docs","prompt":"Look up the system resource requirements for running a Solace software broker in the official documentation.","should_trigger":true},
+  {"skill":"solace-docs","prompt":"Where in the Solace documentation is dead message queue behavior described? Fetch the page and quote what it says.","should_trigger":true},
+  {"skill":"solace-docs","prompt":"Check docs.solace.com for the supported upgrade paths for the software broker. Read the current page rather than answering from memory.","should_trigger":true},
+  {"skill":"solace-docs","prompt":"Can you find the official Solace docs page comparing topic endpoints and queues and give me what it actually says?","should_trigger":true},
+
+  {"skill":"solace-docs","prompt":"Build me a guaranteed-messaging consumer in Java that binds to an existing durable queue and reconnects cleanly if the broker connection drops.","should_trigger":false,"must_pass":true},
+  {"skill":"solace-docs","prompt":"Using the JCSMP API, what's the cleanest way to build a request-reply exchange between two Java components over Solace?","should_trigger":false},
+  {"skill":"solace-docs","prompt":"We're deciding how to name our Solace topics across teams. What levels should a topic have, and in what order from general to specific?","should_trigger":false},
+  {"skill":"solace-docs","prompt":"How many partitions should my Kafka topic have, and how does the partition key affect message ordering?","should_trigger":false,"must_pass":true},
+  {"skill":"solace-docs","prompt":"The solace-docs skill fetched the wrong page for me twice. Help me write up feedback I can send to Solace about it.","should_trigger":false},
+  {"skill":"solace-docs","prompt":"Write a Python script that downloads a webpage and converts it to Markdown.","should_trigger":false},
+  {"skill":"solace-docs","prompt":"Summarize the README in this repository for me.","should_trigger":false},
+  {"skill":"solace-docs","prompt":"My Solace consumer subscribed to orders/> but isn't receiving anything. Debug why the messages aren't showing up.","should_trigger":false}
+]

@@ -12,6 +12,7 @@ A collection of Solace AI agent plugins that package skills for building event-d
 ```shell
 /plugin marketplace add SolaceProducts/agent-plugins
 /plugin install solace-messaging-skills@solace-agent-plugins
+/plugin install solace-docs@solace-agent-plugins
 ```
 
 ### `skills` CLI
@@ -45,12 +46,20 @@ This repository includes the following skills:
 | **solace-application-development** | Routes Solace messaging design and implementation requests to grounded Solace documentation. Full guidance for messaging pattern selection, runnable code generation, and message round trip verification arrives in upcoming releases. |
 | **solace-topic-best-practices** | Navigation-only lookup skill that reads the canonical Topic Architecture Best Practices page online and applies it to topic-hierarchy decisions, without generating application code. |
 | **solace-messaging-feedback** | Formats the current session into copy-paste-ready feedback about the skills, routed by support-contract status: contract holders get an email to Solace Support for bugs and a Solace Ideas portal submission for feature ideas, users without a contract get a Solace Community post for both. Formatter only: it produces the text for you to review and send or post, and never sends anything itself. |
+| **solace-docs** | Navigation-only lookup skill (in the solace-docs plugin) that finds the right docs.solace.com page from a bundled sitemap and reads the current page online as Markdown, quoting or summarizing the live documentation instead of answering from memory. |
 
 ## Repository layout
 
 ```
 agent-plugins/
 ├── plugins/                         # Claude plugins, one subdirectory per plugin
+│   ├── solace-docs/                 # The documentation lookup plugin
+│   │   ├── .claude-plugin/          # Plugin definition (plugin.json)
+│   │   ├── evals/                   # Trigger eval corpus (trigger-evals.json) and its README
+│   │   └── skills/
+│   │       └── solace-docs/         # Online documentation lookup skill
+│   │           ├── SKILL.md         # Lookup instructions
+│   │           └── docs/            # Bundled sitemap (INDEX.md) of live docs.solace.com Markdown URLs
 │   └── solace-messaging-skills/     # The messaging skills plugin
 │       ├── .claude-plugin/          # Plugin definition (plugin.json)
 │       ├── evals/                   # Trigger eval corpus (trigger-evals.json) and its README
