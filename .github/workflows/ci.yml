@@ -3,6 +3,7 @@ name: ci
 # Parallel quality gates (D-16). No `needs:` between jobs so branch
 # protection on `main` can require each independently:
 #   validate:      CI-01: gh skill publish --dry-run + claude plugin validate (marketplace root)
+#                  + marketplace.json/plugins/ sync + version bumps on release PRs
 #   link-check:    CI-02: the tools/check-links.sh sweep
 #   compile-check: EVAL-02 compile the baked JCSMP samples verbatim
 #   trigger-evals: lightweight skill-triggering check; self-skips green without a key
@@ -38,6 +39,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # version check: merge-base + `git show <base>:` need real history
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -50,6 +53,21 @@ jobs:
       # Validate the Claude plugin/marketplace manifests from the marketplace root (".").
       - name: claude plugin validate (marketplace root)
         run: claude plugin validate . --strict
+      # Every marketplace entry must resolve to a real plugin dir and every
+      # plugin dir must be listed (pure tree check, runs on every event).
+      - name: Marketplace sync check
+        run: ./tools/check-plugin-versions.sh --sync-only
+      # Version bumps happen only in release PRs: fork dev -> upstream
+      # SolaceProducts main. github.base_ref is the PR's target branch in
+      # whichever repo hosts the PR, so this step fires on those upstream
+      # release PRs (the enforcement point) and on the fork's post-release
+      # main sync (where it passes, the bump already landed). It never runs
+      # on PRs into dev, and base_ref is empty on push and workflow_dispatch,
+      # so it self-skips there too. Claude Code caches installed plugins by
+      # the plugin.json version, so an unbumped release never reaches users.
+      - name: Check plugin version bumps (release PRs)
+        if: github.base_ref == 'main'
+        run: ./tools/check-plugin-versions.sh "${{ github.event.pull_request.base.sha }}"
 
   # CI-02: sweep the plugins/ tree for broken and soft-404 documentation links.
   link-check:
