@@ -16,7 +16,7 @@ A collection of Solace AI agent plugins that package skills for building event-d
 
 ### `skills` CLI
 
-This lets you pick specific skills to install and supports most agents.
+This lets you pick specific skills to install. The skills in this repository follow the open [Agent Skills](https://agentskills.io) standard, and the [`skills` CLI](https://github.com/vercel-labs/skills) discovers skills in this format from any GitHub repository and installs them into a wide range of agents, including Claude Code, Cursor, Codex, GitHub Copilot, and Windsurf.
 
 ```shell
 npx skills add SolaceProducts/agent-plugins

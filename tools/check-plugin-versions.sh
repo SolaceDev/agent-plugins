@@ -25,7 +25,9 @@
 #
 # The version check diffs merge-base(base-ref, HEAD)..HEAD, so only this
 # branch's own committed changes count; commit local changes before running.
-# In CI the base is the pull request base SHA and checkout uses fetch-depth: 0
+# The old version comes from the base-ref tip, so a version the base
+# already ships fails the comparison.
+# In CI the base is origin/<base branch> and checkout uses fetch-depth: 0
 # so the merge base and the base-side plugin.json are reachable.
 #
 # Exit codes: 0 = all checks pass, 1 = violation(s) or unresolvable base.
@@ -81,15 +83,32 @@ if [[ "$SYNC_ONLY" -eq 0 ]]; then
     echo "Locally: git fetch origin main (or pass a base ref). In CI: checkout needs fetch-depth: 0." >&2
     exit 1
   fi
-  merge_base=$(git merge-base "$BASE_REF" HEAD)
+  # Unchecked, a merge-base failure would leave $merge_base empty, the diff
+  # below empty, and the whole check would silently pass.
+  if ! merge_base=$(git merge-base "$BASE_REF" HEAD); then
+    echo "::error::no common ancestor between '${BASE_REF}' and HEAD"
+    echo "No common ancestor between '${BASE_REF}' and HEAD (shallow clone or unrelated histories)." >&2
+    echo "Locally: use a full clone (git fetch --unshallow)." >&2
+    exit 1
+  fi
 
   if [[ "$merge_base" == "$(git rev-parse HEAD)" ]]; then
     echo "No commits beyond ${BASE_REF}; nothing to version-check."
   else
-    changed=$(git diff --name-only "$merge_base" HEAD -- plugins/)
+    # core.quotePath=false: git would otherwise C-quote non-ASCII paths
+    # ("plugins/x/caf\303\251.md"), which the sed extraction below would
+    # silently skip. --no-renames: a rename reports only its destination
+    # path, hiding the deletion side from the content filter below.
+    if ! changed=$(git -c core.quotePath=false diff --no-renames --name-only "$merge_base" HEAD -- plugins/); then
+      echo "::error::git diff ${merge_base}..HEAD failed"
+      exit 1
+    fi
     plugin_names=$(printf '%s\n' "$changed" | sed -n 's|^plugins/\([^/]*\)/.*|\1|p' | sort -u)
 
-    for name in $plugin_names; do
+    # read -r, not `for ... in`: word splitting would break a plugin dir name
+    # containing whitespace into fragments and silently skip it.
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
       manifest="plugins/${name}/.claude-plugin/plugin.json"
 
       # Deleted plugin: nothing to version; Part B flags the stale marketplace entry.
@@ -128,7 +147,10 @@ if [[ "$SYNC_ONLY" -eq 0 ]]; then
         continue
       fi
 
-      old_manifest=$(git show "${merge_base}:${manifest}" 2>/dev/null) || old_manifest=""
+      # Old version from the base-ref tip, not the merge base: a version the
+      # base already ships would leave users' cached installs stale even if
+      # it beats the fork-point version.
+      old_manifest=$(git show "${BASE_REF}:${manifest}" 2>/dev/null) || old_manifest=""
       if [[ -z "$old_manifest" ]]; then
         echo "plugins/${name}: new plugin at ${new_ver}, OK."
         continue
@@ -146,7 +168,7 @@ if [[ "$SYNC_ONLY" -eq 0 ]]; then
         echo "  changed content files (first 10):"
         printf '%s' "$content" | head -n 10 | sed 's/^/    x /'
       fi
-    done
+    done <<<"$plugin_names"
   fi
 fi
 
@@ -154,10 +176,20 @@ fi
 
 if [[ ! -f "$MARKETPLACE" ]]; then
   fail "$MARKETPLACE" "marketplace manifest ${MARKETPLACE} is missing"
+# Reject an unparseable manifest up front with a specific error; the checked
+# extraction below would also catch it, but with a less specific message.
+elif ! jq -e '.plugins | type == "array"' "$MARKETPLACE" >/dev/null 2>&1; then
+  fail "$MARKETPLACE" "cannot parse ${MARKETPLACE} (invalid JSON or missing .plugins array)"
+# Captured, not process-substituted: `done < <(jq ...)` hides a mid-stream
+# @tsv failure (non-scalar name), silently passing on partial rows.
+elif ! entries=$(jq -r '.plugins[] | [.name, (.source | type), (.source | tostring)] | @tsv' "$MARKETPLACE"); then
+  fail "$MARKETPLACE" "cannot extract entries from ${MARKETPLACE} (every entry \"name\" must be a JSON scalar)"
 else
   # Newline-separated source list for the reverse (directory -> entry) check.
   sources=""
   while IFS=$'\t' read -r ename etype esrc; do
+    # An empty .plugins array reaches the loop as one empty here-string line.
+    [[ -n "$etype" ]] || continue
     if [[ "$etype" != "string" ]]; then
       fail "$MARKETPLACE" "marketplace entry '${ename}': non-string source is not supported by this check; update tools/check-plugin-versions.sh if the format changed"
       continue
@@ -177,17 +209,25 @@ else
     if [[ "$pname" != "$ename" ]]; then
       fail "$pmanifest" "marketplace entry name '${ename}' does not match plugin.json name '${pname}'"
     fi
-  done < <(jq -r '.plugins[] | [.name, (.source | type), (.source | tostring)] | @tsv' "$MARKETPLACE")
+  done <<<"$entries"
 
-  # Duplicate entry names or sources hide one plugin behind another.
-  dup_names=$(jq -r '[.plugins[].name] | group_by(.)[] | select(length > 1)[0]' "$MARKETPLACE")
-  for d in $dup_names; do
+  # Duplicate entry names or sources hide one plugin behind another. Checked
+  # jq exit so a failed query is not "no duplicates"; read -r so names with
+  # whitespace stay whole.
+  if ! dup_names=$(jq -r '[.plugins[].name] | group_by(.)[] | select(length > 1)[0]' "$MARKETPLACE"); then
+    fail "$MARKETPLACE" "duplicate-name check failed to run against ${MARKETPLACE}"
+  fi
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
     fail "$MARKETPLACE" "marketplace has duplicate entries named '${d}'"
-  done
-  dup_sources=$(jq -r '[.plugins[].source | tostring] | group_by(.)[] | select(length > 1)[0]' "$MARKETPLACE")
-  for d in $dup_sources; do
+  done <<<"$dup_names"
+  if ! dup_sources=$(jq -r '[.plugins[].source | tostring] | group_by(.)[] | select(length > 1)[0]' "$MARKETPLACE"); then
+    fail "$MARKETPLACE" "duplicate-source check failed to run against ${MARKETPLACE}"
+  fi
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
     fail "$MARKETPLACE" "marketplace has duplicate entries with source '${d}'"
-  done
+  done <<<"$dup_sources"
 
   # Reverse direction: every plugin directory must be listed.
   for dir in plugins/*/; do
