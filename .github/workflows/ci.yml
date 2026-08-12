@@ -3,10 +3,17 @@ name: ci
 # Parallel quality gates (D-16). No `needs:` between jobs so branch
 # protection on `main` can require each independently:
 #   validate:      CI-01: gh skill publish --dry-run + claude plugin validate (marketplace root)
+#                  + marketplace.json/plugins/ sync + version bumps on release PRs
+#                  + post-merge version backstop on pushes to main
 #   link-check:    CI-02: the tools/check-links.sh sweep
 #   compile-check: EVAL-02 compile the baked JCSMP samples verbatim
 #   trigger-evals: lightweight skill-triggering check; self-skips green without a key
 on:
+  # Deliberately no `edited` type: running on title/body edits either re-runs
+  # the paid eval matrix for a no-code change or, if jobs are gated, lets the
+  # edit supersede a red required check (skipped counts as success). Base
+  # retargeting to main is instead covered by the post-merge backstop below
+  # plus branch protection "require branches to be up to date" on main.
   pull_request:
   push:
     branches: [main]
@@ -19,9 +26,12 @@ permissions:
   contents: read
 
 # Supersede stacked runs on the same ref: each trigger-evals leg spends real
-# API budget, so consecutive pushes cancel the previous run instead of queuing.
+# API budget, so consecutive PR pushes cancel the previous run instead of
+# queuing. Pushes to main group by SHA instead, so a backstop run is never
+# cancelled (or pending-replaced) by the next merge, which would leave its
+# pushed range unchecked and grey instead of red.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,9 +48,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # version check: merge-base + `git show <base>:` need real history
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
       - name: Validate skills against the Agent Skills spec (gh skill publish dry run)
@@ -50,6 +62,34 @@ jobs:
       # Validate the Claude plugin/marketplace manifests from the marketplace root (".").
       - name: claude plugin validate (marketplace root)
         run: claude plugin validate . --strict
+      # Every marketplace entry must resolve to a real plugin dir and every
+      # plugin dir must be listed (pure tree check, runs on every event).
+      - name: Marketplace sync check
+        run: ./tools/check-plugin-versions.sh --sync-only
+      # Version bumps happen only in release PRs: fork dev -> upstream
+      # SolaceProducts main. github.base_ref is the PR's target branch in
+      # whichever repo hosts the PR, so this step fires on those upstream
+      # release PRs (the enforcement point) and on the fork's post-release
+      # main sync (where it passes, the bump already landed). It never runs
+      # on PRs into dev, and base_ref is empty on push and workflow_dispatch,
+      # so it self-skips there too. Claude Code caches installed plugins by
+      # the plugin.json version, so an unbumped release never reaches users.
+      # origin/<base>, not the event's base.sha: the latter goes stale when
+      # the base branch advances after the last PR event, silently widening
+      # the diff to other PRs' commits.
+      - name: Check plugin version bumps (release PRs)
+        if: github.base_ref == 'main'
+        run: ./tools/check-plugin-versions.sh "origin/${{ github.base_ref }}"
+      # Post-merge backstop: merging one release PR does not re-run another's
+      # checks (synchronize fires only on head pushes), so a second PR can
+      # merge on a stale green with a version main already ships. Re-checking
+      # the pushed merge against event.before (the pre-push tip) turns that
+      # red instead of silent. Prevention needs branch protection (up-to-date
+      # branches or a merge queue); `!created` skips the branch-creation push,
+      # where event.before is the all-zeros SHA.
+      - name: Check plugin version bumps (post-merge backstop)
+        if: github.event_name == 'push' && !github.event.created
+        run: ./tools/check-plugin-versions.sh "${{ github.event.before }}"
 
   # CI-02: sweep the plugins/ tree for broken and soft-404 documentation links.
   link-check:
@@ -104,7 +144,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: env.HAS_KEY == 'true'
         with:
-          node-version: 20
+          node-version: 24
       - name: Install Claude Code CLI
         if: env.HAS_KEY == 'true'
         run: npm install -g @anthropic-ai/claude-code
