@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0    # version check: merge-base + `git show <base>:` need real history
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
       - name: Validate skills against the Agent Skills spec (gh skill publish dry run)
@@ -144,7 +144,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: env.HAS_KEY == 'true'
         with:
-          node-version: 20
+          node-version: 24
       - name: Install Claude Code CLI
         if: env.HAS_KEY == 'true'
         run: npm install -g @anthropic-ai/claude-code
