@@ -2,7 +2,7 @@
 
 This checklist records what the chosen mode delivered and what remains the developer's responsibility. Each item is one binary (yes/no) check with one canonical Solace doc link. Read the linked doc to decide; the check is not a substitute for the doc.
 
-This file is the master template. Every Implement run emits a per-project copy into the generated project, tailored to the chosen mode and the code that was generated. Nothing here implies the generated output is ready to carry real traffic; each mode delivers a baseline, and the items below name what it delivered and what stays the developer's job. The three groups make that split explicit. "Delivered by this generation" names what the chosen mode generated into the code, so on that mode those items report as delivered; each carries a per-mode branch note because the same item is the developer's responsibility on a mode that did not generate it (for example, the secure-session item on Quickstart, which connects over plaintext). "Your responsibility (not delivered here)" names what no generation satisfies for the chosen mode, so those items stay the developer's responsibility. "Verified by the round-trip" names the conformance checks the publisher to consumer round-trip already exercises.
+This file is the master template. Every Implement run emits a per-project copy into the generated project at generation time (implement-mode.md Step 4), tailored to the chosen mode and the code that was generated. Nothing here implies the generated output is ready to carry real traffic; each mode delivers a baseline, and the items below name what it delivered and what stays the developer's job. The responsibility groups make that split explicit. "Delivered by this generation" names what the chosen mode generated into the code, so on that mode those items report as delivered; each carries a per-mode branch note because the same item is the developer's responsibility on a mode that did not generate it (for example, the secure-session item on Quickstart, which connects over plaintext). "Your responsibility (not delivered here)" names what no generation satisfies for the chosen mode, so those items stay the developer's responsibility. "Verified by the round-trip" names the conformance checks the publisher to consumer round-trip already exercises.
 
 ## Delivered by this generation
 
@@ -24,6 +24,17 @@ This file is the master template. Every Implement run emits a per-project copy i
 - [ ] The session, flow, reconnect, and publish ACK/NACK event handlers from the reference samples are preserved across the generated classes (not stripped during generation). [JCSMP Best Practices](https://docs.solace.com/API/API-Developer-Guide-JCSMP/JCSMP-API-Best-Practices.md)
 - [ ] Messages are published with PERSISTENT (Guaranteed) delivery for the guaranteed journey. [Message Delivery Modes](https://docs.solace.com/API/API-Developer-Guide-JCSMP/JCSMP-API-Message-Delivery-Modes.md)
 - [ ] The publisher to consumer round-trip is verified against a reachable broker: a PERSISTENT message published to the topic lands on the subscribed durable queue and is consumed and acknowledged. [Provisioning a Durable Endpoint](https://docs.solace.com/API/API-Developer-Guide-JCSMP/JCSMP-API-Provisioning-Durable-End.md)
+
+## Generation conformance (checked by the verify.sh preflight)
+
+These are mechanical conformance checks on the generated output itself; the copied `verify.sh` reports the first four in its preflight, so a miss is visible on every run. They carry no doc link because they check skill conformance, not Solace guidance.
+
+- [ ] Every generated source file starts with the exact line `AI-assisted code. Review before production use.` followed by the checklist pointer line.
+- [ ] Exactly one logging backend is configured with a config resource on the classpath; any `log4j-core` on the classpath (including transitive) is at or above `2.17.1`; the `com.solacesystems` loggers are not silenced below INFO.
+- [ ] The `sol-jcsmp` version in the pom matches the authoritative `<release>` from the `repo1.maven.org` Maven metadata at generation time (never the solrsearch index).
+- [ ] This tailored checklist file exists at every generated project root.
+- [ ] A `verify.sh` stage ran and its stage name and exit code are recorded here: `<stage> → exit <code>` (or: the compile-only fallback was taken and the exact commands were handed back).
+- [ ] Every page named in the design summary's Grounding docs field was WebFetched in this session (`none fetched` is an honest value; an unfetched citation is not).
 
 ## Developer-owned items (not delivered by this skill)
 

@@ -1,6 +1,10 @@
 /*
  * Shared connection-config helper for the JCSMP reference samples.
  *
+ * Any generated adaptation of this sample MUST begin with the exact line:
+ *   AI-assisted code. Review before production use.
+ * (This reference sample itself carries no such header by design.)
+ *
  * Loads connection properties and turns them into a JCSMPProperties. Source
  * precedence:
  *   1. a config.json in the working directory (the project root), when present.

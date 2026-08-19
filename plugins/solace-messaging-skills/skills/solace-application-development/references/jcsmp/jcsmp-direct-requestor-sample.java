@@ -20,6 +20,10 @@
  * main's finally on every exit path.
  *
  * Only practices documented in canonical Solace sources are encoded here.
+ *
+ * Any generated adaptation of this sample MUST begin with the exact line:
+ *   AI-assisted code. Review before production use.
+ * (This reference sample itself carries no such header by design.)
  */
 
 package com.solace.samples.jcsmp;
@@ -63,7 +67,7 @@ public class DirectRequestor {
     private static JCSMPSession session;
 
     // remember to add log4j2.xml to your classpath
-    private static final Logger logger = LogManager.getLogger();  // log4j2, but could also use SLF4J, JCL, etc.
+    private static final Logger logger = LogManager.getLogger();  // log4j2 by default; any backend swap follows the logging rule in implement-mode.md Step 3
 
     /** Main. */
     public static void main(String... args) throws JCSMPException, IOException, InterruptedException {
