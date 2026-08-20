@@ -33,6 +33,7 @@ These are mechanical conformance checks on the generated output itself; the copi
 - [ ] Exactly one logging backend is configured with a config resource on the classpath; any `log4j-core` on the classpath (including transitive) is at or above `2.17.1`; the `com.solacesystems` loggers are not silenced below INFO.
 - [ ] The `sol-jcsmp` version in the pom matches the authoritative `<release>` from the `repo1.maven.org` Maven metadata at generation time (never the solrsearch index).
 - [ ] This tailored checklist file exists at every generated project root.
+- [ ] Every construct carried from a reference sample keeps that construct's comment (names adapted); dropped demo-harness code took its comments with it; fresh messaging code that applies a documented practice carries a short comment naming it (the comments-follow-their-code contract, implement-mode.md Step 4).
 - [ ] A `verify.sh` stage ran and its stage name and exit code are recorded here: `<stage> → exit <code>` (or: the compile-only fallback was taken and the exact commands were handed back).
 - [ ] Every page named in the design summary's Grounding docs field was WebFetched in this session (`none fetched` is an honest value; an unfetched citation is not).
 
