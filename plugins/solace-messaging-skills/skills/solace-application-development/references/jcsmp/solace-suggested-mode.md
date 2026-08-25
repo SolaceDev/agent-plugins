@@ -2,7 +2,7 @@
 
 The Solace Suggested overlay for Implement mode. This file is reached from `implement-mode.md` Step 0 when the developer chooses the Solace Suggested path. It hardens whatever the design summary chose without re-describing how the chosen leaf is generated. Work through the steps in order. Read this file's grounding links only as each step needs them; link the canonical doc and state the decision in one line, never paraphrase doc content.
 
-This overlay's Secure sub-mode assumes a Solace Cloud broker whose TLS server certificate is already configured and chains to a public CA; its Non-Secure sub-mode targets a dev or test broker that has no TLS configured. Solace Cloud is the primary broker default; the session is built from the connection details the developer pasted into a gitignored `config.json`. Step 1 forks that session build into Secure (a `tcps://` host with explicit certificate validation) and Non-Secure (a plaintext `tcp://` host with no certificate validation). The overlay does NOT provision or configure any broker (no DMQ, no queues, no TLS certificates). It states the broker-side prerequisites; it never sets them up.
+This overlay is TLS-secure by definition. It assumes a broker whose TLS server certificate is already configured; Solace Cloud, the primary broker default, has TLS out of the box and chains to a public CA. There is NO non-secure variant of Solace Suggested. When the target broker has no TLS configured, do not proceed on this path: state that Solace Suggested requires a TLS-capable broker and route back to the `implement-mode.md` Step 0 door, which offers Custom with the equivalent knobs minus the secure session, or Quickstart. The session is built from the connection details the developer pasted into a gitignored `config.json`. The overlay does NOT provision or configure any broker (no DMQ, no queues, no TLS certificates). It states the broker-side prerequisites; it never sets them up.
 
 ## This is a leaf-agnostic overlay
 
@@ -18,27 +18,15 @@ The Solace Suggested path reads broker connection details from a `config.json` f
 
 Generate the classes directly, with no per-stage confirmation gate: write the Publisher and the Subscriber (or the Requestor and the Replier) the same way Quickstart does, then let the developer review the written files. Do NOT preview sensitive excerpts and ask the developer to confirm before writing each stage. The credential VALUES live only in the gitignored `config.json`, never in a generated class or the chat, so there is nothing credential-bearing to gate on; writing the generated code does not need a confirmation.
 
-## Step 1: Build the session (Secure or Non-Secure)
+## Step 1: Build the TLS secure session
 
-This is the ONLY step that forks. When the developer chose Solace Suggested at `implement-mode.md` Step 0, Step 0 also asked whether they want Secure or Non-Secure. This overlay reads that Secure or Non-Secure flag and forks the session build here, and ONLY here. Every other step in this overlay is identical on both sub-modes: DMQ eligibility, HA failover, the two decoupled projects, the admin-provisioned-queue guidance, and the return to the implement-mode contracts all run the same way whichever sub-mode the developer picked. Non-Secure inverts exactly one thing versus Secure: it keeps the plaintext `tcp://` scheme and sets no certificate-validation property.
-
-### Secure: build the TLS secure session
-
-The pasted Solace Cloud `host` carries a `tcps://` scheme. `tcps://` is the secure transport: it runs the session over TLS. If the developer pasted a `tcp://` (plaintext) host, upgrade it to `tcps://` and state the TLS-already-configured assumption to them; never open a plaintext session on the Secure sub-mode. The plaintext `tcp://` scheme must not survive into the generated `host` value.
+The pasted Solace Cloud `host` carries a `tcps://` scheme. `tcps://` is the secure transport: it runs the session over TLS. If the developer pasted a `tcp://` (plaintext) host, upgrade it to `tcps://` and state the TLS-already-configured assumption to them; never open a plaintext session on the Solace Suggested path. The plaintext `tcp://` scheme must not survive into the generated `host` value. If the broker genuinely has no TLS configured, this overlay does not fit: route back to the `implement-mode.md` Step 0 door (Custom minus the secure-session knob, or Quickstart) rather than degrading the session here.
 
 Set `JCSMPProperties.SSL_VALIDATE_CERTIFICATE = true` EXPLICITLY. The value is the JCSMP default, but setting it explicitly makes the secure posture auditable and visible in code review: a reviewer sees that server-certificate validation is on without having to know the default. For the same auditable reason, also set `JCSMPProperties.SSL_VALIDATE_CERTIFICATE_DATE = true` explicitly, so the not-expired check is equally visible. The two explicit lines together state the full validation posture.
 
 Do NOT generate a custom trust store. The Solace Cloud public-CA happy path falls back to the JVM default trust store (`cacerts`), which already carries the public root CAs, so no `SSL_TRUST_STORE` or `SSL_TRUST_STORE_PASSWORD` is needed. NEVER set `SSL_VALIDATE_CERTIFICATE` to `false` anywhere in the session setup; disabling server-certificate validation defeats the secure session entirely.
 
 Ground TLS in [Creating Secure Sessions](https://docs.solace.com/API/API-Developer-Guide-JCSMP/JCSMP-API-Creating-Secure-Sessions.htm).
-
-### Non-Secure: build a plaintext session
-
-Keep the plaintext `tcp://` scheme the developer pasted and build a plaintext session. Whatever `tcp://` host they pasted survives verbatim into the generated `host` value; do NOT upgrade it to `tcps://`. This is the sub-mode for a dev or test broker that has no TLS configured.
-
-Omit the certificate-validation properties ENTIRELY. A plaintext session has no server certificate to validate, so set NO `SSL_` property at all: no `SSL_VALIDATE_CERTIFICATE`, no `SSL_VALIDATE_CERTIFICATE_DATE`, and no trust store. The properties are simply absent. NEVER emit `SSL_VALIDATE_CERTIFICATE` set to `false`: the correct posture is absence, and a `false` value would be a misleading artifact that also reads as a disabled-validation anti-pattern. Setting the property to `false` is never the Non-Secure instruction; the property does not appear at all.
-
-State the caveat plainly to the developer: the Non-Secure sub-mode uses unencrypted transport, it fits a dev or test broker that has no TLS configured, and it is not appropriate for real credentials or real data over untrusted networks. Then drop ONE short comment at the session-build site in the generated class conveying the same: a single line noting the session is plaintext with no TLS and is intended for a dev or test broker only. Keep it to that one comment; do not scatter the caveat through the class.
 
 ## Step 2: Ask the HA-failover question; upgrade the reconnect channel values on yes, keep the sample baseline on no
 
