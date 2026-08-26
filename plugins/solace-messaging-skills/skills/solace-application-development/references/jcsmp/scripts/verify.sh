@@ -279,15 +279,25 @@ PUBLISH_WAIT_S=30   # foreground-publisher deadline before escalating to a code 
 SHUTDOWN_WAIT_S=15  # bounded post-SIGINT wait before escalating to SIGTERM/SIGKILL
 
 # ── Bounded long-running shutdown (shared by the env-failure teardown and STAGE D) ─
-# Send SIGINT to the PID passed as $1, poll up to SHUTDOWN_WAIT_S for the JVM to
-# exit on its own, then escalate SIGTERM then SIGKILL. A JVM that hangs after
-# SIGINT is an anticipated failure mode, so NO teardown path may use a bare
-# unbounded `wait`. Sets the global `rc` to the process's real exit code, or to
-# the synthetic 124 when the run hung and had to be force-killed (124 is never a
-# clean exit). The PID is a parameter so every long-running stage (the guaranteed
-# subscriber, and the request/reply repliers added in later plans) can reuse it.
+# Send SIGINT to the process GROUP of the PID passed as $1, poll up to
+# SHUTDOWN_WAIT_S for the JVM to exit on its own, then escalate SIGTERM then
+# SIGKILL (also group-directed). A JVM that hangs after SIGINT is an anticipated
+# failure mode, so NO teardown path may use a bare unbounded `wait`. Sets the
+# global `rc` to the process's real exit code, or to the synthetic 124 when the
+# run hung and had to be force-killed (124 is never a clean exit). The PID is a
+# parameter so every long-running stage (the guaranteed subscriber, the
+# request/reply repliers, and the app stage) can reuse it.
+#
+# Why the kills target "-$1" (the group), not "$1": every launch site
+# backgrounds its process under `set -m`, so each recorded PID leads its own
+# process group. For the mvn stages the group is just the JVM, so this is
+# equivalent to a PID kill. For the app stage the target may be a `bash -c`
+# wrapper: macOS's system bash 3.2 keeps the wrapper alive for a compound
+# START_CMD (bash 4.4+ execs the final command), and a PID-directed kill would
+# then stop only the wrapper and orphan the app underneath it. Group-directed
+# signals reach both.
 shutdown_long_running() {
-    kill -INT "$1" 2>/dev/null || true
+    kill -INT -- "-$1" 2>/dev/null || true
 
     rc=0
     local hung=0
@@ -303,14 +313,17 @@ shutdown_long_running() {
     if [ "$hung" -eq 1 ]; then
         # The process did not honour SIGINT within the deadline; escalate and fail.
         echo "── Process did not exit ${SHUTDOWN_WAIT_S}s after SIGINT; escalating (SIGTERM, then SIGKILL) ──" >&2
-        kill -TERM "$1" 2>/dev/null || true
+        kill -TERM -- "-$1" 2>/dev/null || true
         sleep 2
-        kill -KILL "$1" 2>/dev/null || true
+        kill -KILL -- "-$1" 2>/dev/null || true
         wait "$1" 2>/dev/null || true
         rc=124  # synthetic "timed out" code; never a clean exit
     else
         # The process exited within the deadline; capture its real exit code.
         wait "$1" 2>/dev/null || rc=$?
+        # Sweep any group member that outlived the leader (a wrapper's app child);
+        # once the whole group is gone this is a no-op.
+        kill -KILL -- "-$1" 2>/dev/null || true
     fi
 }
 
@@ -347,10 +360,18 @@ PUB_LOG="$(mktemp)"
 # a set -e exit), the backgrounded subscriber JVM would otherwise keep running
 # detached. It holds the EXCLUSIVE queue flow, so an orphan breaks every later
 # verify.sh run until manually killed, and both mktemp logs would leak. The
-# EXIT trap makes teardown unconditional; for processes already waited on and
-# logs already removed it is a harmless no-op.
+# EXIT trap covers every graceful exit path: bash runs it on normal exit, on
+# set -e exits, and on untrapped SIGINT/SIGTERM (verified on bash 3.2 through
+# 5.2). SIGKILL is the one residual: no trap can run, and `set -m` has put each
+# child in its own process group, so a hard kill of this script's group cannot
+# reach them. That orphan risk is inherent to the set -m SIGINT-delivery
+# mechanism (header note) and cannot be closed from inside the script. The
+# kills are group-directed for the same reason shutdown_long_running's are (see
+# its note). For processes already waited on and logs already removed the trap
+# is a harmless no-op.
 cleanup() {
-    kill -TERM "${SUB_PID:-}" "${PUB_PID:-}" 2>/dev/null || true
+    if [ -n "${SUB_PID:-}" ]; then kill -TERM -- "-$SUB_PID" 2>/dev/null || true; fi
+    if [ -n "${PUB_PID:-}" ]; then kill -TERM -- "-$PUB_PID" 2>/dev/null || true; fi
     rm -f "${SUB_LOG:-}" "${PUB_LOG:-}"
 }
 trap cleanup EXIT
@@ -862,7 +883,7 @@ run_app_stage() {
         echo "app stage needs ./verify-hooks.sh (generated with the project; defines START_CMD, TRIGGER_CMD, READY_MARKER, PASS_MARKER)" >&2
         exit 1
     fi
-    # shellcheck disable=SC1091
+    # shellcheck source=/dev/null  # generated at runtime with the project; nothing to lint statically
     . ./verify-hooks.sh
     local v
     for v in START_CMD TRIGGER_CMD READY_MARKER PASS_MARKER; do
