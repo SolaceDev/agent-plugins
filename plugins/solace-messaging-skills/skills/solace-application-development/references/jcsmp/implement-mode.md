@@ -175,12 +175,14 @@ A web app, an embedded service, or any single-process shape that the six fixed s
 ```bash
 # verify-hooks.sh — generated with the project; verify.sh's app stage sources it.
 START_CMD='java -jar target/the-app.jar'                                   # starts the app (long-running)
-TRIGGER_CMD='curl -s -X POST localhost:8081/api/orders -d "{\"demo\":1}"'  # causes exactly one publish
+TRIGGER_CMD='curl -s --max-time 10 -X POST localhost:8081/api/orders -d "{\"demo\":1}"'  # causes exactly one publish
 READY_MARKER='VERIFY: QUEUE_BOUND'          # marker proving the consuming side is live
 PASS_MARKER='VERIFY: MESSAGE_RECEIVED'      # marker proving the round trip
 ```
 
-The `app` stage starts `START_CMD` in the background and captures its output, waits for `VERIFY: CONNECTED` and then `READY_MARKER` (an environment signature or a timeout before that classifies as exit 2 or exit 1), runs `TRIGGER_CMD` in the foreground, waits for `PASS_MARKER` in the app's captured output, then stops the app with SIGINT and classifies. Set `READY_MARKER`/`PASS_MARKER` to the chosen leaf's own markers. A curl inside `TRIGGER_CMD` is exactly the right use of curl: it triggers, and the markers judge. On the canonical two-class shape, generate `verify-hooks.sh` too, carrying the classic commands (`START_CMD='mvn -q exec:java@subscriber'`, `TRIGGER_CMD='mvn -q exec:java@publisher'`) so the file documents the same contract everywhere; the fixed stages do not read it.
+Generate `verify-hooks.sh` with ONLY these four assignments. The app stage imports exactly these four names from a child shell and ignores everything else in the file, so an extra variable, a `cd`, or a function never reaches the script's own state; keep the file to the four lines all the same. Give a network trigger its own timeout (the `--max-time` above): the stage also bounds the trigger externally and force-kills one that never returns, but a self-timing trigger leaves cleaner evidence.
+
+The `app` stage starts `START_CMD` in the background and captures its output, waits for `VERIFY: CONNECTED` and then `READY_MARKER` (an environment signature or a timeout before that classifies as exit 2 or exit 1), runs `TRIGGER_CMD` under a bounded deadline (a trigger that never returns is force-killed, and the marker watch still decides the verdict), waits for `PASS_MARKER` in the app's captured output, then stops the app with SIGINT and classifies. Set `READY_MARKER`/`PASS_MARKER` to the chosen leaf's own markers. A curl inside `TRIGGER_CMD` is exactly the right use of curl: it triggers, and the markers judge. On the canonical two-class shape, generate `verify-hooks.sh` too, carrying the classic commands (`START_CMD='mvn -q exec:java@subscriber'`, `TRIGGER_CMD='mvn -q exec:java@publisher'`) so the file documents the same contract everywhere; the fixed stages do not read it.
 
 ### Interpret the exit code
 

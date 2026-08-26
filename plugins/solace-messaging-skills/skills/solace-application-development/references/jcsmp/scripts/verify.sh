@@ -866,9 +866,11 @@ run_request_reply_stage() {
 # app-specific facts (how to start the app, how to cause one publish, which leaf
 # markers gate readiness and prove the pass); this function keeps the universal
 # logic: marker watching in the app's own captured output, bounded waits, the
-# ENV_SIGNATURES classification, and the shared 0/1/2 exit contract. Sourcing the
-# generated hooks file runs generated shell by design: the hooks are generation
-# output, exactly like the app they drive. TRIGGER_CMD may be a curl against the
+# ENV_SIGNATURES classification, and the shared 0/1/2 exit contract. The hooks
+# still run as generated shell by design (they are generation output, exactly
+# like the app they drive), but in a CHILD bash: only the four declared values
+# are imported, so a stray extra line in the generated file cannot clobber the
+# observer's own state. TRIGGER_CMD may be a curl against the
 # app's own API — the curl is the TRIGGER; the markers render the VERDICT. The
 # app stage does not require the samples' shutdown-hook proof line: an embedded
 # app may manage shutdown its own way, so a pass is READY_MARKER + PASS_MARKER
@@ -878,8 +880,13 @@ run_app_stage() {
         echo "app stage needs ./verify-hooks.sh (generated with the project; defines START_CMD, TRIGGER_CMD, READY_MARKER, PASS_MARKER)" >&2
         exit 1
     fi
-    # shellcheck source=/dev/null  # generated at runtime with the project; nothing to lint statically
-    . ./verify-hooks.sh
+    # Source the hooks in a CHILD bash and import ONLY the four contract values.
+    # A hooks file that cds, sets observer state (status, TIMEOUT_S, SUB_LOG,
+    # ...), or redefines a function affects only the child, never this scope.
+    # The child routes the sourcing's stdout to stderr so stray output stays
+    # visible but is never eval'd; only declare -p's safely-quoted assignments
+    # come back. A missing value is caught by the loop below.
+    eval "$(bash -c '. ./verify-hooks.sh >&2; declare -p START_CMD TRIGGER_CMD READY_MARKER PASS_MARKER 2>/dev/null' || true)"
     local v
     for v in START_CMD TRIGGER_CMD READY_MARKER PASS_MARKER; do
         [ -n "${!v:-}" ] || { echo "verify-hooks.sh must set $v" >&2; exit 1; }
@@ -916,10 +923,33 @@ run_app_stage() {
     if [ "$status" -eq 2 ]; then
         shutdown_long_running "$SUB_PID"
     elif [ "$ready" -eq 1 ]; then
-        # Settle window, then the trigger (foreground; must return on its own).
+        # Settle window, then the trigger. Bounded like STAGE B's foreground
+        # publisher: a trigger that never returns (a wedged app that accepts the
+        # request and never responds) must not hang the unattended script, so it
+        # runs backgrounded in its own group, polled to PUBLISH_WAIT_S, then
+        # escalated SIGTERM/SIGKILL. The marker watch below still runs after a
+        # hung trigger: the trigger's exit code was never part of the verdict
+        # (the markers are), and the publish may have landed even if the HTTP
+        # response never came back. Reusing PUB_PID (not a new name) keeps the
+        # EXIT trap's group-kill coverage over an orphaned trigger.
         sleep 2
         echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
-        bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 || true
+        set -m
+        bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
+        PUB_PID=$!
+        set +m
+        local trig_deadline=$(( SECONDS + PUBLISH_WAIT_S ))
+        while kill -0 "$PUB_PID" 2>/dev/null; do
+            if [ "$SECONDS" -ge "$trig_deadline" ]; then
+                echo "── Trigger did not exit within ${PUBLISH_WAIT_S}s; escalating (SIGTERM, then SIGKILL) ──" >&2
+                kill -TERM -- "-$PUB_PID" 2>/dev/null || true
+                sleep 2
+                kill -KILL -- "-$PUB_PID" 2>/dev/null || true
+                break
+            fi
+            sleep 1
+        done
+        wait "$PUB_PID" 2>/dev/null || true
 
         local pass_deadline=$(( SECONDS + TIMEOUT_S ))
         while [ "$SECONDS" -lt "$pass_deadline" ]; do
