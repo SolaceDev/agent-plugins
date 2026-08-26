@@ -224,9 +224,9 @@ case "$STAGE" in
     publisher) ;;  # waits for VERIFY: PUBLISH_ACKED in PUB_LOG
     consumer)  ;;  # waits for VERIFY: QUEUE_BOUND in SUB_LOG
     roundtrip) ;;  # waits for VERIFY: MESSAGE_RECEIVED in SUB_LOG
-    direct) ;;                    # NEW (waves 2-4): direct pub/sub stage
-    direct-request-reply) ;;      # NEW (waves 2-4): direct request-reply stage
-    guaranteed-request-reply) ;;  # NEW (waves 2-4): guaranteed request-reply stage
+    direct) ;;                    # direct pub/sub stage
+    direct-request-reply) ;;      # direct request-reply stage
+    guaranteed-request-reply) ;;  # guaranteed request-reply stage
     app) ;;                       # generic single-app stage driven by ./verify-hooks.sh
     *) echo "unknown stage: $STAGE" >&2; usage ;;
 esac
@@ -266,7 +266,7 @@ SHUTDOWN_LINE='Shutdown signal received'
 
 # The baked consumer sample prints this line and exits CLEANLY when the broker
 # disallows client-side endpoint management (session.isCapable(ENDPOINT_MANAGEMENT)
-# is false, consumer sample lines 119-125; implement-mode.md Step 4 Subscriber
+# is false; implement-mode.md Step 4 Subscriber
 # item 3 keeps that behavior in the generated class). On that path the queue can
 # never bind, but the code is NOT the problem: a working app against a
 # restrictively configured broker must classify as an environment failure
@@ -543,11 +543,6 @@ else
 fi
 }  # end run_guaranteed_stage
 
-# ── Placeholder stages (NOT implemented in this plan; filled by waves 2-4) ───────
-# The dispatch wiring is in place so a later per-pattern increment drops a real
-# body here without touching the dispatch front or the byte-stable guaranteed
-# flow. Until then each stub echoes that it is not implemented and exits non-zero
-# so no new pattern behavior is claimed.
 # ── run_direct_stage: the direct (at-most-once) pub/sub flow (D-04/D-05) ──────────
 # Direct messaging is at-most-once: no broker ACK, no redelivery, so a message
 # published to a not-yet-propagated subscription is simply dropped. This stage drives
@@ -950,10 +945,8 @@ run_app_stage() {
 }
 
 # ── Stage-dispatch front ─────────────────────────────────────────────────────────
-# Route the validated stage to its per-pattern function. The guaranteed arm holds
-# the byte-stable run_guaranteed_stage; the three new arms route to placeholder
-# functions until waves 2-4 fill them. publisher|consumer|roundtrip stay spelled
-# exactly (referenced by implement-mode.md Step 5).
+# Route the validated stage to its per-pattern function. publisher|consumer|roundtrip
+# stay spelled exactly (referenced by implement-mode.md Step 5).
 case "$STAGE" in
     publisher|consumer|roundtrip)  run_guaranteed_stage ;;
     direct)                        run_direct_stage ;;
