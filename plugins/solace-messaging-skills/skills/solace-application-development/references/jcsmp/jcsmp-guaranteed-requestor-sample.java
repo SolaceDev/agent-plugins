@@ -157,6 +157,8 @@ public class GuaranteedRequestor {
         BytesMessage requestMsg = JCSMPFactory.onlyInstance().createMessage(BytesMessage.class);
         requestMsg.setData(("Request from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
         requestMsg.setDeliveryMode(DeliveryMode.PERSISTENT);  // required for Guaranteed
+        // a temporary (anonymous) queue in the reply-to field is the documented shape for
+        // request/reply: https://docs.solace.com/Messaging/Guaranteed-Msg/Queues.htm#well-known-queues
         requestMsg.setReplyTo(replyQueue);                    // reply-to = the temporary reply queue
         // set a unique CorrelationID on the request (the doc-recommended request/reply
         // matching mechanism). The replier echoes it onto the reply; the requestor is
