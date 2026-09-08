@@ -88,12 +88,10 @@
 #   cleanup only ever removes that subdirectory. Otherwise a mktemp
 #   directory is used. Kept (and printed) whenever the run fails.
 #   OUTPUT_EVAL_BROKER_HOST, OUTPUT_EVAL_BROKER_VPN, OUTPUT_EVAL_BROKER_USER,
-#   OUTPUT_EVAL_BROKER_PASSWORD enable the live_verify grader (host as
-#   tcp://<host>:55555). Set all four or none: a partial set is an error.
-#   OUTPUT_EVAL_BROKER_ENV names a shell file of KEY=value lines that the
-#   runner sources first when it exists (default
-#   ~/.config/solace-evals/broker.env); keep it outside the repository. The
-#   values reach only verify.sh, as CLI args, never the subject model.
+#   OUTPUT_EVAL_BROKER_PASSWORD, when exported, enable the live_verify grader
+#   (host as tcp://<host>:55555). Export all four or none: a partial set is
+#   an error. The values reach only verify.sh, as CLI args, never the
+#   subject model.
 
 set -uo pipefail
 export LC_ALL=C
@@ -138,14 +136,11 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
   exit 1
 fi
 
-# Live-verify broker (opt-in, tri-state). Source the env file when present, then
-# count the four variables: none = skip loudly, all = run, a partial set = error,
-# so a typo in one name can never degrade to a silent skip. The values must not
-# reach the subject model (the compile anchor asserts compile-only behavior), so
-# the export attribute is stripped: they stay shell variables handed to verify.sh.
-BROKER_ENV="${OUTPUT_EVAL_BROKER_ENV:-$HOME/.config/solace-evals/broker.env}"
-# shellcheck source=/dev/null
-[[ -f "$BROKER_ENV" ]] && source "$BROKER_ENV"
+# Live-verify broker (opt-in, tri-state). Count the four exported variables:
+# none = skip loudly, all = run, a partial set = error, so a typo in one name can
+# never degrade to a silent skip. The values must not reach the subject model
+# (the compile anchor asserts compile-only behavior), so the export attribute is
+# stripped: they stay shell variables handed to verify.sh.
 BROKER_VARS=(OUTPUT_EVAL_BROKER_HOST OUTPUT_EVAL_BROKER_VPN OUTPUT_EVAL_BROKER_USER OUTPUT_EVAL_BROKER_PASSWORD)
 missing=()
 for v in "${BROKER_VARS[@]}"; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
@@ -154,7 +149,7 @@ if [[ ${#missing[@]} -eq 0 ]]; then
 elif [[ ${#missing[@]} -eq ${#BROKER_VARS[@]} ]]; then
   LIVE_VERIFY=skip
 else
-  echo "ERROR: partial broker configuration: set all four OUTPUT_EVAL_BROKER_* variables or none (missing: ${missing[*]})." >&2
+  echo "ERROR: partial broker configuration: export all four OUTPUT_EVAL_BROKER_* variables or none (missing: ${missing[*]})." >&2
   exit 1
 fi
 export -n "${BROKER_VARS[@]}"
@@ -426,6 +421,7 @@ grade_one() {
       proj="$(dirname "$pom")"
       [[ -f "$proj/verify.sh" ]] || { GRADER_DETAIL="no verify.sh beside $pom"; return 1; }
       log="$RUN_DIR/live-verify.log"
+      LIVE_RAN=1
       if command -v timeout >/dev/null 2>&1; then
         ( cd "$proj" && timeout 600 bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
       else
@@ -457,7 +453,7 @@ else
   WORKDIR="$(mktemp -d)"
 fi
 
-pass=0; fail=0; infra=0; must_fail=0; LIVE_NEEDED=0
+pass=0; fail=0; infra=0; must_fail=0; LIVE_NEEDED=0; LIVE_RAN=0
 
 for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
   [[ -e "$evals_file" ]] || continue
@@ -510,7 +506,7 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     if [[ "$LIVE_VERIFY" == "run" ]]; then
       echo "live verify: ENABLED against $OUTPUT_EVAL_BROKER_HOST"
     else
-      echo "live verify: SKIPPED (set the four OUTPUT_EVAL_BROKER_* variables, or fill $BROKER_ENV, to enable)"
+      echo "live verify: SKIPPED (export the four OUTPUT_EVAL_BROKER_* variables to enable)"
     fi
   fi
 
@@ -614,8 +610,10 @@ fi
 echo "$pass passed, $fail failed ($((pass * 100 / total))% pass rate, gate is 90%)"
 [[ "$must_fail" -gt 0 ]] && echo "$must_fail must-pass case(s) failed (any must-pass failure fails the run)"
 if [[ "$LIVE_NEEDED" -eq 1 ]]; then
-  if [[ "$LIVE_VERIFY" == "run" ]]; then
-    echo "live verify: ran against $OUTPUT_EVAL_BROKER_HOST"
+  if [[ "$LIVE_VERIFY" == "run" && "$LIVE_RAN" -eq 1 ]]; then
+    echo "live verify: ran against $OUTPUT_EVAL_BROKER_HOST (see the case line for its verdict)"
+  elif [[ "$LIVE_VERIFY" == "run" ]]; then
+    echo "live verify: enabled against $OUTPUT_EVAL_BROKER_HOST but never executed (the case failed before grading)"
   else
     echo "live verify: skipped (no broker configured); say so in the PR record"
   fi

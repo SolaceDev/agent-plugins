@@ -3,7 +3,7 @@
     "id": "appdev-design-summary-positive",
     "skill": "solace-application-development",
     "turns": [
-      "I'm planning a Java system on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard and a run.sh launcher, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
+      "I'm planning a Java system on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
       "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
     ],
     "max_turns": 25,
@@ -33,7 +33,7 @@
     "skill": "solace-application-development",
     "must_pass": true,
     "turns": [
-      "Build a Java chat room with a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Ensure the app uses port 9090 or higher and create a run.sh file so I can launch it easily. Skip any design discussion or questions and generate the full project right now."
+      "Build a Java chat room with a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Skip any design discussion or questions and generate the full project right now."
     ],
     "max_turns": 25,
     "graders": [
