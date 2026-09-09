@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Output-eval corpus",
+  "description": "Structure of plugins/<plugin>/evals/output-evals.json, the input to tools/run-output-evals.sh. The file is an array of cases. Each case scripts one conversation with the plugin under test and lists the graders that judge the resulting transcript and generated files. A case passes only when the target skill fired and every grader passed. Case ids must be unique across the file; JSON Schema cannot express that rule, so the runner enforces it at start-up together with the structural checks below.",
+  "type": "array",
+  "minItems": 1,
+  "items": { "$ref": "#/$defs/case" },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "description": "One scripted conversation plus its graders.",
+      "required": ["id", "skill", "user_turns", "graders"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Unique kebab-case case name. Used by the --case filter and printed on every result line. Convention: <skill-short-name>-<behavior>[-positive|-negative]."
+        },
+        "skill": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the skill that must fire during the case (the Skill tool's skill input without the plugin prefix, for example solace-application-development). The runner fails the case when this skill never fired, because the output would not be attributable to it and every absence grader would pass vacuously."
+        },
+        "user_turns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Ordered scripted user messages. The first starts a session; each later one continues that session with --resume. The model's replies between user turns are not scripted, so write later user turns so they cannot be misread (state consent or refusal explicitly)."
+        },
+        "max_agent_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 25,
+          "description": "Budget of agent turns (model replies and tool calls) for each user turn's invocation, passed as --max-turns. Conversational cases need about 15 to 25; a full implement flow needs about 80. Hitting the cap fails the case and is tagged [max-turns] on the result line so a budget problem is distinguishable from a behavior failure."
+        },
+        "must_pass": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, a failure of this case fails the whole run regardless of the pooled 90% pass rate. Reserve it for acceptance-criteria negatives and the compile anchor."
+        },
+        "graders": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/grader" },
+          "description": "Checks applied after all turns complete. Every grader must pass. Absence checks should be scoped to a tool or construct, never to a bare substring: comments and documents that quote a prohibition false-positive naive patterns."
+        }
+      }
+    },
+    "grader": {
+      "description": "One check over the transcript or the generated files. The type field selects the check and decides which other fields are allowed.",
+      "oneOf": [
+        { "$ref": "#/$defs/assistant_grep" },
+        { "$ref": "#/$defs/tool_use" },
+        { "$ref": "#/$defs/file_exists" },
+        { "$ref": "#/$defs/file_grep" },
+        { "$ref": "#/$defs/java_disclaimer" },
+        { "$ref": "#/$defs/compile" },
+        { "$ref": "#/$defs/maven_release_match" },
+        { "$ref": "#/$defs/llm_judge" },
+        { "$ref": "#/$defs/live_verify" }
+      ]
+    },
+    "expect_presence": {
+      "type": "string",
+      "enum": ["present", "absent"],
+      "default": "present",
+      "description": "present: at least one match must exist. absent: no match may exist."
+    },
+    "turn_scope": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Restrict the check to the transcript of this user turn (1-based index into user_turns). Omit to check all user turns."
+    },
+    "fixed_string": {
+      "type": "boolean",
+      "default": false,
+      "description": "true: treat pattern as a fixed string (grep -F). false: treat it as an extended regular expression (grep -E)."
+    },
+    "assistant_grep": {
+      "type": "object",
+      "description": "Grep over the assistant's text blocks only. Tool payloads and the scripted user turns are excluded so they cannot false-positive.",
+      "required": ["type", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "assistant_grep" },
+        "pattern": { "type": "string", "minLength": 1, "description": "Text to look for in the assistant's replies." },
+        "expect": { "$ref": "#/$defs/expect_presence" },
+        "fixed": { "$ref": "#/$defs/fixed_string" },
+        "turn": { "$ref": "#/$defs/turn_scope" }
+      }
+    },
+    "tool_use": {
+      "type": "object",
+      "description": "Match tool_use events by tool name and, optionally, by a regular expression over the compact JSON of the tool input.",
+      "required": ["type", "tool"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "tool_use" },
+        "tool": { "type": "string", "minLength": 1, "description": "Tool name to match (Write, Edit, Bash, WebFetch, Skill, ...). \"*\" matches every tool." },
+        "input_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression that the compact input JSON must match for the event to count." },
+        "exclude_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression; matching events are dropped before counting. Use it to allow a specific benign match inside an otherwise absent check." },
+        "expect": { "$ref": "#/$defs/expect_presence" },
+        "count": { "type": "integer", "minimum": 0, "description": "With expect present: the exact number of matching events required. Omit to require at least one." },
+        "turn": { "$ref": "#/$defs/turn_scope" }
+      }
+    },
+    "file_exists": {
+      "type": "object",
+      "description": "Find generated files by basename glob under the case work directory. Maven build output under target/ is excluded.",
+      "required": ["type", "glob"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "file_exists" },
+        "glob": { "type": "string", "minLength": 1, "description": "Basename glob, for example pom.xml, *.java, or * for any file." },
+        "expect": { "$ref": "#/$defs/expect_presence" },
+        "identical_to": { "type": "string", "minLength": 1, "description": "Repository-relative path. With expect present, every matched file must be byte-identical to this file. Used to prove a bundled script was copied verbatim." }
+      }
+    },
+    "file_grep": {
+      "type": "object",
+      "description": "Grep the generated files matched by a basename glob.",
+      "required": ["type", "glob", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "file_grep" },
+        "glob": { "type": "string", "minLength": 1, "description": "Basename glob selecting the files to grep." },
+        "pattern": { "type": "string", "minLength": 1, "description": "Text to look for in the selected files." },
+        "expect": {
+          "type": "string",
+          "enum": ["present", "absent", "all_files"],
+          "default": "present",
+          "description": "present: at least one selected file matches. absent: no selected file matches (also passes when no file matches the glob). all_files: every selected file matches."
+        },
+        "fixed": { "$ref": "#/$defs/fixed_string" }
+      }
+    },
+    "java_disclaimer": {
+      "type": "object",
+      "description": "Every generated .java file starts with the AI-assisted disclaimer line and the verification-checklist pointer. Fails when no .java file exists.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "java_disclaimer" } }
+    },
+    "compile": {
+      "type": "object",
+      "description": "Run mvn compile on every generated pom.xml (two-project layouts compile each project). Any non-zero exit fails the case; a timeout is an infrastructure failure. Requires mvn on PATH.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "compile" } }
+    },
+    "maven_release_match": {
+      "type": "object",
+      "description": "Every generated pom.xml carries the current sol-jcsmp release version published in the Maven Central metadata. A metadata fetch failure is an infrastructure failure, not a case failure.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "maven_release_match" } }
+    },
+    "llm_judge": {
+      "type": "object",
+      "description": "One tool-free completion on the judge model (OUTPUT_EVAL_JUDGE_MODEL) that returns a strict pass or fail verdict for one criterion. Use it for routing and grounding questions that a grep cannot decide. An unparseable verdict after two attempts is an infrastructure failure.",
+      "required": ["type", "criteria"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "llm_judge" },
+        "criteria": { "type": "string", "minLength": 1, "description": "The single criterion the judge grades. State the PASS condition and the FAIL condition explicitly." },
+        "include": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["assistant_text", "webfetch_urls", "webfetch_results"] },
+          "default": ["assistant_text"],
+          "description": "Transcript material shown to the judge. assistant_text: the assistant's replies across all turns. webfetch_urls: the deduplicated list of URLs fetched with WebFetch. webfetch_results: the truncated content those fetches returned."
+        }
+      }
+    },
+    "live_verify": {
+      "type": "object",
+      "description": "Run the generated project's own verify.sh roundtrip against the broker named by the exported OUTPUT_EVAL_BROKER_* variables. verify.sh exit 0 passes; exit 2 (a broker or credential error) or a timeout is an infrastructure failure; any other exit fails. Skips, and reports the skip, when no broker is configured.",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": { "type": { "const": "live_verify" } }
+    }
+  }
+}

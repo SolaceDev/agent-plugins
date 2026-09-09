@@ -20,12 +20,20 @@
 # MULTI-TURN CASES
 #   Several contracts only resolve across turns (a design confirm, the door
 #   question, the support-contract checkpoint), so a case carries an ordered
-#   "turns" array of user messages. Turn 1 starts a session; later turns
+#   "user_turns" array of user messages. Turn 1 starts a session; later turns
 #   continue it via `claude -p --resume <session_id>`, re-extracting the
 #   session id after every turn. Each turn writes its own turnN.jsonl
 #   transcript so graders can scope assertions to a turn.
 #
-# GRADERS (closed set; the corpus schema is validated up front)
+# CORPUS SCHEMA
+#   tools/output-evals.schema.json (JSON Schema, draft 2020-12) defines the
+#   corpus structure and documents the intent of every field. The start-up
+#   check below enforces its structural subset (array shape, required fields,
+#   unique ids, known grader types) and exits before any API call when the
+#   corpus violates it. Validate an edit against the full schema with any JSON
+#   Schema validator; the per-grader field rules live only in the schema.
+#
+# GRADERS (closed set; the corpus shape is validated up front)
 #   assistant_grep      grep over the assistant's TEXT blocks only (never the
 #                       raw JSONL: tool payloads and user turns would
 #                       false-positive). Fields: pattern, expect
@@ -500,13 +508,13 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
         and all(.[];
               (.id    | type=="string" and length>0)
           and (.skill | type=="string" and length>0)
-          and (.turns | type=="array" and length>0 and all(.[]; type=="string" and length>0))
+          and (.user_turns | type=="array" and length>0 and all(.[]; type=="string" and length>0))
           and ((.must_pass // false) | type=="boolean")
-          and ((.max_turns // 25)    | type=="number")
+          and ((.max_agent_turns // 25)    | type=="number")
           and (.graders | type=="array" and length>0
                and all(.[]; type=="object" and (.type as $t | $types | index($t)))))' \
         "$evals_file" >/dev/null 2>&1; then
-    echo "ERROR: $evals_file is not a non-empty array of {id, skill, turns, graders[, max_turns, must_pass]} cases with unique ids and known grader types." >&2
+    echo "ERROR: $evals_file is not a non-empty array of {id, skill, user_turns, graders[, max_agent_turns, must_pass]} cases with unique ids and known grader types." >&2
     rm -rf "$CLAUDE_CONFIG_DIR" "$WORKDIR"
     exit 1
   fi
@@ -549,8 +557,8 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     in_filter "$case_id" || continue
     skill="$(jq -r '.skill' <<<"$case_json")"
     must="$(jq -r '.must_pass // false' <<<"$case_json")"
-    max_turns="$(jq -r '.max_turns // 25' <<<"$case_json")"
-    NTURNS="$(jq -r '.turns | length' <<<"$case_json")"
+    max_turns="$(jq -r '.max_agent_turns // 25' <<<"$case_json")"
+    NTURNS="$(jq -r '.user_turns | length' <<<"$case_json")"
 
     run_pass=0; case_infra=0; fail_details=()
     for ((k = 1; k <= RUNS; k++)); do
@@ -566,7 +574,7 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
         sid=""
         turn_infra=0
         for ((t = 1; t <= NTURNS; t++)); do
-          turn_prompt="$(jq -r ".turns[$((t - 1))]" <<<"$case_json")"
+          turn_prompt="$(jq -r ".user_turns[$((t - 1))]" <<<"$case_json")"
           args=(-p "$turn_prompt" --plugin-dir "$plugin_dir" --model "$MODEL"
                 --max-turns "$max_turns" --allowedTools "${ALLOWED_TOOLS[@]}"
                 --output-format stream-json --verbose)
@@ -611,7 +619,7 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
       done < <(jq -c '.graders[]' <<<"$case_json")
       [[ "$case_infra" -eq 1 ]] && { fail_details=("${this_run_details[@]}"); break; }
 
-      [[ "$MAXTURNS_HIT" -eq 1 ]] && this_run_details+=("[max-turns] a turn hit the $max_turns-turn cap")
+      [[ "$MAXTURNS_HIT" -eq 1 ]] && this_run_details+=("[max-turns] a user turn hit the max_agent_turns cap of $max_turns")
       if [[ ${#this_run_details[@]} -eq 0 ]]; then
         run_pass=$((run_pass + 1))
       else

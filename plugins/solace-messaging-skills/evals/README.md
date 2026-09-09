@@ -20,15 +20,41 @@ In GitHub Actions, the `trigger-evals` job in `.github/workflows/ci.yml` runs th
 
 # Output evals
 
-Trigger evals ask whether the right skill fires. Output evals ask the next question: does the skill's output honor the skill contract? The corpus at `plugins/<plugin>/evals/output-evals.json` holds the cases for the plugin's skills. Each case carries an `id`, the target `skill`, an ordered `turns` array of scripted user messages (multi-turn cases continue one session via `--resume`), an optional per-invocation `max_turns` budget, an optional `must_pass` flag, and a `graders` array. A case passes only when the target skill fired, every grader passed, and no turn hit the `max_turns` cap.
+Trigger evals ask whether the right skill fires. Output evals ask the next question: does the skill's output honor the skill contract? The corpus at `plugins/<plugin>/evals/output-evals.json` holds the cases for the plugin's skills. Each case carries an `id`, the target `skill`, an ordered `user_turns` array of scripted user messages (multi-turn cases continue one session via `--resume`), an optional `max_agent_turns` budget (the model's replies and tool calls allowed per user turn), an optional `must_pass` flag, and a `graders` array. A case passes only when the target skill fired, every grader passed, and no user turn hit the `max_agent_turns` cap. The full structure, with the intent of every field, is defined in `tools/output-evals.schema.json` (JSON Schema, draft 2020-12). The runner enforces the structural subset of that schema at start-up (array shape, required fields, unique ids, known grader types) and exits before any API call when the corpus violates it. Validating an edit against the full schema, including the per-grader field rules, is a manual step with any JSON Schema validator for now.
 
 For the application-development skill, the cases cover these contract points end to end: the broker-access question, design mode entered rather than skipped, `solace-design.md` saved on request by the end of design mode, the three-way door question (Quickstart, Solace Suggested, Custom), the Solace Suggested secure connection and HA failover question, the Quickstart posture (plaintext capable, single project, no HA question), and the AI-generated notice at the top of every generated file. The compile case also carries an opt-in live round trip: when the four `OUTPUT_EVAL_BROKER_*` variables are set, the runner executes the generated project's own `verify.sh` against that broker. Without them the grader skips, the run says so up front and in its summary, and no case ever requires broker credentials.
 
 Two grader families exist. Deterministic graders (`assistant_grep`, `tool_use`, `file_exists`, `file_grep`, `java_disclaimer`, `compile`, `maven_release_match`, `live_verify`) check the transcript and the generated files mechanically, including a real `mvn compile` of the generated project, a match of the generated pom against the live sol-jcsmp `<release>` on Maven Central, and, when a broker is configured, a real `verify.sh roundtrip` of the generated project. The `llm_judge` grader sends the transcript to a fixed judge model for routing and grounding criteria that a grep cannot decide. Negative cases assert the absence of forbidden behavior: code before a design confirm, a support email before the support-contract confirmation, unscrubbed identifiers in a feedback draft, and memory-derived debug steps. Run `./tools/run-output-evals.sh --help` for the full grader reference.
 
+## How the transcript maps onto the corpus
+
+Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json --verbose` stream of one `claude -p` invocation, one file per entry in `user_turns`. The runner reads only the fields in this table. The shapes were observed with Claude Code 2.1.266 on 2026-09-09. Re-check this table after a CLI upgrade, because a change to these fields breaks the graders silently.
+
+| Corpus field or runner concept | Source in `turnN.jsonl` |
+|---|---|
+| `user_turns[i]` | Not in the file. Entry `i` is the `-p` prompt of invocation `i`, and the stream never echoes it. The only `user` events are tool results. Each entry produces its own `turn<i>.jsonl`. |
+| `max_agent_turns` | Passed as `--max-turns`. The `result` event reports `num_turns` (agent turns used, one per assistant message cycle) and sets `subtype` to `error_max_turns` when the cap is hit. |
+| Grader `turn` | Selects which `turn<N>.jsonl` file the grader reads. It is not a field inside the file. |
+| `skill` (the implicit skill-fired gate) | An `assistant` event whose `message.content[]` holds a `tool_use` block with `name` `Skill`. Its `input.skill` is `plugin:skill-name`; the runner strips the prefix. |
+| `assistant_grep` | `assistant` events, `message.content[]` blocks with `type` `text`. Thinking blocks and tool payloads are excluded. |
+| `tool_use` | `assistant` events, blocks with `type` `tool_use`. The runner matches `name` and greps the compact JSON of `input`. |
+| `llm_judge` with `webfetch_urls` or `webfetch_results` | WebFetch `tool_use` blocks supply the URLs. `user` events whose `tool_result.tool_use_id` matches a WebFetch block supply the fetched content. |
+| Session continuity (`--resume`) | `session_id` on the `result` event, with the `init` event as the fallback. |
+| INFRA verdict for a turn | A missing `result` event, or `result.is_error` true with a `subtype` other than `error_max_turns`. |
+
 ## Running the output evals locally
 
-You need the `claude` CLI, `jq`, and `curl` on your PATH, plus an exported credential. The compile case also needs `mvn` with a JDK 11 or newer, and network access to `repo1.maven.org` and `docs.solace.com`. Run from the repository root:
+### Prerequisites
+
+- The `claude` CLI (Claude Code) on your PATH.
+- `jq` and `curl` on your PATH.
+- `mvn` (Apache Maven) with a JDK 11 or newer on your PATH. Only the cases that compile generated code need it, and the runner checks for it only when such a case is selected.
+- An exported credential, either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. The runner uses a throwaway config directory with no ambient login. Claude seat holders can mint a token with `claude setup-token`.
+- Network access to `repo1.maven.org` (Maven Central metadata and dependencies) and `docs.solace.com` (the skills fetch documentation pages).
+- Optional: the four `OUTPUT_EVAL_BROKER_*` variables for the live round trip against a real broker (see below).
+- On macOS, `caffeinate` to keep the machine awake for a full leg.
+
+Run from the repository root:
 
 ```shell
 export ANTHROPIC_API_KEY=<your key>            # or CLAUDE_CODE_OAUTH_TOKEN

@@ -2,11 +2,11 @@
   {
     "id": "appdev-design-summary-positive",
     "skill": "solace-application-development",
-    "turns": [
+    "user_turns": [
       "I'm planning a Java system on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
       "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
     ],
-    "max_turns": 25,
+    "max_agent_turns": 25,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
@@ -32,10 +32,10 @@
     "id": "appdev-code-before-confirm-negative",
     "skill": "solace-application-development",
     "must_pass": true,
-    "turns": [
+    "user_turns": [
       "Build a Java chat room with a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Skip any design discussion or questions and generate the full project right now."
     ],
-    "max_turns": 25,
+    "max_agent_turns": 25,
     "graders": [
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
@@ -47,12 +47,12 @@
     "id": "appdev-quickstart-implement-full",
     "skill": "solace-application-development",
     "must_pass": true,
-    "turns": [
+    "user_turns": [
       "Build a Java app on our Solace event broker for food-delivery order processing. An OrderService publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing KitchenWorker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Maven project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
       "Yes, I am happy with that design. Save it to solace-design.md, then go ahead.",
       "Quickstart. I will not put credentials in the chat, so compile only and hand me the exact verify commands to run myself."
     ],
-    "max_turns": 80,
+    "max_agent_turns": 80,
     "graders": [
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 2 },
@@ -97,10 +97,10 @@
     "id": "appdev-debug-redirect-negative",
     "skill": "solace-application-development",
     "must_pass": true,
-    "turns": [
+    "user_turns": [
       "My pharmacy refill-authorization Java app uses JCSMP, and the replier now throws JCSMPErrorResponseException 503 Service Unavailable when it binds to the request queue. Walk me through debugging this step by step."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "assistant_grep", "pattern": "https://docs.solace.com/API/Messaging-APIs/JCSMP-API/jcsmp-api-home.md", "fixed": true, "expect": "present" },
       { "type": "file_exists", "glob": "*", "expect": "absent" },
@@ -114,13 +114,13 @@
   {
     "id": "appdev-suggested-secure",
     "skill": "solace-application-development",
-    "turns": [
+    "user_turns": [
       "Build a Java app on our Solace event broker where a pharmacy service requests refill authorization from a doctor's-office service and waits for the answer. Neither the request nor the approval may be lost. Plain Maven, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Request-Reply (Guaranteed); derive the topic and queue names yourself.",
       "Yes, I am happy with that design. No need to save it, go ahead.",
       "Solace Suggested.",
       "No HA failover needed. I will not share credentials in the chat; compile only and hand me the commands to run myself."
     ],
-    "max_turns": 80,
+    "max_agent_turns": 80,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 3 },
       { "type": "java_disclaimer" },
@@ -140,10 +140,10 @@
     "id": "feedback-email-before-confirm-negative",
     "skill": "solace-messaging-feedback",
     "must_pass": true,
-    "turns": [
+    "user_turns": [
       "The solace-application-development skill generated a JCSMP subscriber that does not compile (missing import for ConsumerFlowProperties). Just write the support email to Solace for me right now. Do not ask me anything first."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "absent" },
       { "type": "assistant_grep", "pattern": "support contract", "fixed": true, "expect": "present" },
@@ -155,11 +155,11 @@
   {
     "id": "feedback-support-email-positive",
     "skill": "solace-messaging-feedback",
-    "turns": [
+    "user_turns": [
       "I have feedback on the solace-application-development skill. While building our schema-registry caching gateway, the generated subscriber called ackMessage() before processing completed, so a crash mid-processing lost the message. I expected the client ack to happen only after processing, the way the docs describe.",
       "Yes, we hold a Solace support contract. Draft the email."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "Actual behavior", "fixed": true, "expect": "present", "turn": 2 },
@@ -175,11 +175,11 @@
   {
     "id": "feedback-routing-judge",
     "skill": "solace-messaging-feedback",
-    "turns": [
+    "user_turns": [
       "Some feedback about the solace-application-development skill: I wish it also generated a Dockerfile and a docker-compose file for the app it builds. Today I hand-write those every time.",
       "We do have a Solace support contract."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "assistant_grep", "pattern": "What is the challenge?", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "What is the impact?", "fixed": true, "expect": "present", "turn": 2 },
@@ -196,11 +196,11 @@
     "id": "feedback-scrub-negative",
     "skill": "solace-messaging-feedback",
     "must_pass": true,
-    "turns": [
+    "user_turns": [
       "Feedback on the JCSMP code generation: while building our schema-registry caching gateway, it generated a subscriber that never acks messages. Our setup, for context: broker tcps://mr-zq9x7.messaging.solace.cloud:55443, message VPN zenithbank-orders-vpn, client username zenithbank-svc-01, queue q.zenithbank.orders.intake. The missing ack is the problem; the connection side works fine.",
       "No support contract. Format it for the community."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "assistant_grep", "pattern": "zq9x7", "fixed": true, "expect": "absent", "turn": 2 },
       { "type": "assistant_grep", "pattern": "[Zz]enith[Bb]ank", "expect": "absent", "turn": 2 },
@@ -215,10 +215,10 @@
   {
     "id": "topics-grounded-answer",
     "skill": "solace-topic-best-practices",
-    "turns": [
+    "user_turns": [
       "We are building a smart home platform on Solace: a two-floor house, several rooms per floor, and each room has some mix of lights, thermostats, and door locks that publish state changes and receive commands. How should we structure our topic hierarchy? Which levels, and in what order?"
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "present" },
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "docs\\.solace\\.com", "exclude_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "absent" },
@@ -235,10 +235,10 @@
   {
     "id": "topics-no-files-negative",
     "skill": "solace-topic-best-practices",
-    "turns": [
+    "user_turns": [
       "Design the topic hierarchy for our smart home platform (two floors, several rooms, lights, thermostats, and door locks) and save the naming conventions to a topic-conventions.md file in this directory so the team can reference it."
     ],
-    "max_turns": 15,
+    "max_agent_turns": 15,
     "graders": [
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
