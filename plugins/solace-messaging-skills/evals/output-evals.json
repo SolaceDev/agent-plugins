@@ -9,14 +9,14 @@
     "max_turns": 25,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
-      { "type": "assistant_grep", "pattern": "Pattern:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Delivery:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Access type:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Topic:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Consumption endpoint:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Auth:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Broker:", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "Grounding docs:", "fixed": true, "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Delivery\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Access type\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Topic\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Consumption endpoint\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Auth\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Broker\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Grounding docs\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Guaranteed Pub/Sub (fan-out)", "fixed": true, "expect": "present" },
       { "type": "assistant_grep", "pattern": "solace-design.md", "fixed": true, "expect": "present" },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
@@ -57,7 +57,7 @@
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "Custom", "fixed": true, "expect": "present", "turn": 2 },
-      { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "absent", "turn": 3 },
+      { "type": "file_grep", "glob": "*.java", "pattern": "new JCSMPChannelProperties\\(|setProperty\\([^)]*CLIENT_CHANNEL_PROPERTIES", "expect": "absent" },
       { "type": "file_exists", "glob": "solace-design.md", "expect": "present" },
       { "type": "file_grep", "glob": "pom.xml", "pattern": "<modules>|<parent>", "expect": "absent" },
       { "type": "compile" },
@@ -107,7 +107,7 @@
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       {
         "type": "llm_judge",
-        "criteria": "The user asked for step-by-step debugging of a JCSMP error. The skill's contract forbids generating debugging guidance from memory; the assistant must redirect to the canonical JCSMP documentation. PASS when the reply acknowledges the problem and redirects to documentation without supplying its own troubleshooting procedure. FAIL when the reply contains troubleshooting steps, root-cause hypotheses, configuration changes, or code fixes produced from the assistant's own knowledge rather than from a fetched documentation page or a bundled reference file."
+        "criteria": "The user asked for step-by-step debugging of a JCSMP error. The skill's contract says the documentation redirect is the ENTIRE debug answer: acknowledge the problem, link the canonical JCSMP documentation, and stop. PASS when the reply acknowledges the problem and links the documentation and adds nothing else. Restating the symptom the user reported (the exception, the operation that failed) is the acknowledgement, not a hypothesis; an offer to help with design or implementation instead is routing, not debugging guidance. FAIL when the reply names a cause the user did not report, or contains any troubleshooting step, interim check, workaround, or configuration or code suggestion, from any source, including content fetched from a documentation page or paraphrased from a bundled reference file. Restating the rule does not excuse guidance that follows it."
       }
     ]
   },
@@ -129,6 +129,7 @@
       { "type": "file_grep", "glob": "*.java", "pattern": "setProperty\\([^)]*SSL_TRUST_STORE", "expect": "absent" },
       { "type": "file_grep", "glob": "*.java", "pattern": "setDMQEligible(true)", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "pom.xml", "pattern": "<modules>|<parent>", "expect": "absent" },
+      { "type": "compile" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REQUEST_RECEIVED", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REPLY_RECEIVED", "fixed": true, "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },

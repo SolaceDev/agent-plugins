@@ -53,7 +53,7 @@ agent-plugins/
 ├── plugins/                         # Claude plugins, one subdirectory per plugin
 │   └── solace-messaging-skills/     # The messaging skills plugin
 │       ├── .claude-plugin/          # Plugin definition (plugin.json)
-│       ├── evals/                   # Trigger eval corpus (trigger-evals.json) and its README
+│       ├── evals/                   # Trigger and output eval corpora and their README
 │       └── skills/                  # Individual skill definitions (shared by all agents)
 │           ├── solace-application-development/  # Solace application development umbrella skill
 │           │   ├── SKILL.md         # Skill routing and instructions
@@ -62,14 +62,16 @@ agent-plugins/
 │           │   └── SKILL.md         # Navigation-only manifest; reads the live docs page
 │           └── solace-messaging-feedback/       # Feedback formatter skill
 │               └── SKILL.md         # Formats and routes session feedback (Support, Community, or Ideas portal)
-├── tools/                           # Re-runnable scripts (check-links, run-trigger-evals)
+├── tools/                           # Re-runnable scripts (check-links, run-trigger-evals, run-output-evals)
 ├── README.md                        # This file
 └── .claude-plugin/                  # Claude marketplace definition (marketplace.json)
 ```
 
-## Trigger evals
+## Trigger and output evals
 
 Each plugin ships a trigger eval corpus under `plugins/<plugin>/evals/` that checks each skill fires on the prompts it should and stays silent on the prompts it should not. See the [trigger evals README](plugins/solace-messaging-skills/evals/README.md) for the corpus format, how to run the evals locally, and how they run in CI.
+
+Each plugin also ships an output eval corpus in the same directory that checks a skill's output honors the skill contract (design before code, the door question, scrubbed feedback drafts, grounded answers). Output evals run locally only. See the [output evals section](plugins/solace-messaging-skills/evals/README.md#output-evals) of the same README for the corpus format, the graders, and how to run them.
 
 ## License
 

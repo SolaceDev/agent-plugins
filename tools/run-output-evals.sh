@@ -7,8 +7,8 @@
 # For every case in each plugin's evals/output-evals.json, the runner plays the
 # case's scripted user turns through the Claude Code CLI with only that plugin
 # loaded, then grades the transcript and any generated files against the case's
-# grader list. A case passes only when the target skill fired AND every grader
-# passed.
+# grader list. A case passes only when the target skill fired, every grader
+# passed, AND no turn hit the turn cap.
 #
 # WHY --plugin-dir AND A SCRATCH CONFIG DIR
 #   Same isolation contract as the trigger runner: --plugin-dir loads the
@@ -44,9 +44,9 @@
 #   java_disclaimer     every generated .java starts with the AI-assisted
 #                       disclaimer line and the checklist pointer; fails when
 #                       no .java exists. No fields.
-#   compile             `mvn -q -B compile` on the shallowest generated
-#                       pom.xml; the exit code is the verdict. No fields.
-#   maven_release_match the generated pom carries the live sol-jcsmp
+#   compile             `mvn -q -B compile` on every generated pom.xml; all
+#                       must exit 0. No fields.
+#   maven_release_match every generated pom carries the live sol-jcsmp
 #                       <release> from repo1.maven.org metadata. No fields.
 #   llm_judge           one tool-free judge completion on
 #                       OUTPUT_EVAL_JUDGE_MODEL returning a strict
@@ -57,9 +57,9 @@
 #                       stage, Quickstart single-project mode) against the
 #                       broker named by the OUTPUT_EVAL_BROKER_* variables.
 #                       verify.sh exit 0 passes; exit 2 (a doc-traceable
-#                       broker or credential error) is INFRA; anything else
-#                       fails. Skips, and says so, when no broker is
-#                       configured. No fields.
+#                       broker or credential error) and a timeout kill are
+#                       INFRA; anything else fails. Skips, and says so, when
+#                       no broker is configured. No fields.
 #
 # RUNS: output cases are expensive (a full Implement flow runs 30+ turns plus
 # Maven), so OUTPUT_EVAL_RUNS defaults to 1. Set it higher for a majority-vote
@@ -131,6 +131,9 @@ done
 command -v claude >/dev/null 2>&1 || { echo "ERROR: the 'claude' CLI is not on PATH. Install @anthropic-ai/claude-code." >&2; exit 1; }
 command -v jq     >/dev/null 2>&1 || { echo "ERROR: 'jq' is not on PATH." >&2; exit 1; }
 command -v curl   >/dev/null 2>&1 || { echo "ERROR: 'curl' is not on PATH." >&2; exit 1; }
+# Arithmetic reads a zero or non-numeric RUNS as 0, which skips every run and
+# trips bash 3.2's empty-array expansion under set -u at the FAIL print.
+[[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: OUTPUT_EVAL_RUNS must be a positive integer (got '$RUNS')." >&2; exit 1; }
 if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
   echo "ERROR: export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN before running (a scratch CLAUDE_CONFIG_DIR has no ambient login)." >&2
   exit 1
@@ -218,8 +221,10 @@ webfetch_results() {
 
 # turn_ok <transcript>: 0 = a real measurement; 1 = infrastructure failure
 # (no result event, or an error other than the turn cap). A turn-cap kill
-# (error_max_turns) is a valid measurement, tagged so a budget problem is
-# distinguishable from a behavior failure.
+# (error_max_turns) is not INFRA: the graders still run over what was
+# produced, but the case fails with a [max-turns] detail, because a scripted
+# turn that never finished is not evidence of the contract. The tag keeps a
+# budget problem distinguishable from a behavior failure.
 turn_ok() {
   local t="$1" subtype is_error
   jq -e 'select(.type=="result")' "$t" >/dev/null 2>&1 || return 1
@@ -228,6 +233,22 @@ turn_ok() {
   [[ "$subtype" == "error_max_turns" ]] && MAXTURNS_HIT=1
   [[ "$is_error" == "true" && "$subtype" != "error_max_turns" ]] && return 1
   return 0
+}
+
+# turn_reason <turn-path-prefix>: one line naming why turn_ok rejected the
+# turn, so an INFRA verdict carries its cause instead of only a work-dir path:
+# the result subtype and message when a result event exists, else the tail of
+# the CLI's stderr capture.
+turn_reason() {
+  local subtype msg err
+  subtype="$(jq -r 'select(.type=="result") | .subtype // empty' "$1.jsonl" 2>/dev/null | tail -1)"
+  if [[ -n "$subtype" ]]; then
+    msg="$(jq -r 'select(.type=="result") | .result // empty' "$1.jsonl" 2>/dev/null | tail -1 | head -c 200)"
+    echo "result subtype $subtype${msg:+: $msg}"
+  else
+    err="$(tail -2 "$1.err" 2>/dev/null | tr '\n' ' ' | head -c 200)"
+    echo "no result event; stderr: ${err:-empty}"
+  fi
 }
 
 # find_files <basename-glob>: generated files under the work dir, excluding
@@ -356,25 +377,34 @@ grade_one() {
       GRADER_DETAIL="$bad"; return 1 ;;
 
     compile)
-      local pom rc
-      pom="$(shallowest_pom)"
-      [[ -z "$pom" ]] && { GRADER_DETAIL="no generated pom.xml to compile"; return 1; }
-      if command -v timeout >/dev/null 2>&1; then
-        timeout 600 mvn -q -B -f "$pom" compile > "$RUN_DIR/mvn-compile.log" 2>&1; rc=$?
-      else
-        mvn -q -B -f "$pom" compile > "$RUN_DIR/mvn-compile.log" 2>&1; rc=$?
-      fi
-      [[ "$rc" -eq 0 ]] && return 0
-      GRADER_DETAIL="mvn compile failed (exit $rc), log: $RUN_DIR/mvn-compile.log"; return 1 ;;
+      # Every generated pom compiles, so a two-project layout (Solace Suggested)
+      # is proven whole, not by whichever pom sorts first.
+      local poms pom rc n=0 log
+      poms="$(find_files pom.xml)"
+      [[ -z "$poms" ]] && { GRADER_DETAIL="no generated pom.xml to compile"; return 1; }
+      while IFS= read -r pom; do
+        n=$((n + 1)); log="$RUN_DIR/mvn-compile-$n.log"
+        if command -v timeout >/dev/null 2>&1; then
+          timeout 600 mvn -q -B -f "$pom" compile > "$log" 2>&1; rc=$?
+        else
+          mvn -q -B -f "$pom" compile > "$log" 2>&1; rc=$?
+        fi
+        # timeout's own exit 124 is a wall-clock kill, not a measurement of the code.
+        [[ "$rc" -eq 124 ]] && { GRADER_DETAIL="mvn compile for $pom timed out after 600s, log: $log"; return 2; }
+        [[ "$rc" -eq 0 ]] || { GRADER_DETAIL="mvn compile failed for $pom (exit $rc), log: $log"; return 1; }
+      done <<<"$poms"
+      return 0 ;;
 
     maven_release_match)
-      local rel pom
+      local rel poms pom
       rel="$(resolve_sol_jcsmp_release)"
       [[ -z "$rel" ]] && { GRADER_DETAIL="could not resolve sol-jcsmp <release> from repo1.maven.org"; return 2; }
-      pom="$(shallowest_pom)"
-      [[ -z "$pom" ]] && { GRADER_DETAIL="no generated pom.xml to check against release $rel"; return 1; }
-      grep -qF "$rel" "$pom" && return 0
-      GRADER_DETAIL="pom does not carry the live sol-jcsmp release $rel"; return 1 ;;
+      poms="$(find_files pom.xml)"
+      [[ -z "$poms" ]] && { GRADER_DETAIL="no generated pom.xml to check against release $rel"; return 1; }
+      while IFS= read -r pom; do
+        grep -qF "$rel" "$pom" || { GRADER_DETAIL="$pom does not carry the live sol-jcsmp release $rel"; return 1; }
+      done <<<"$poms"
+      return 0 ;;
 
     llm_judge)
       local criteria includes pfile jfile attempt raw verdict reason
@@ -403,8 +433,11 @@ grade_one() {
         fi
       } > "$pfile"
       for attempt in 1 2; do
-        claude -p "$(cat "$pfile")" --model "$JUDGE_MODEL" --max-turns 1 \
-          --output-format json < /dev/null > "$jfile" 2>"$RUN_DIR/judge${JUDGE_N}.err"
+        # --tools "" keeps the judge tool-free (a tool call would spend its only
+        # turn and leave no verdict); the cd keeps the operator's project
+        # settings out of the judge session, as $WORK does for the subject.
+        ( cd "$RUN_DIR" && claude -p "$(cat "$pfile")" --model "$JUDGE_MODEL" --max-turns 1 \
+            --tools "" --output-format json < /dev/null > "$jfile" 2>"$RUN_DIR/judge${JUDGE_N}.err" )
         raw="$(jq -r '.result // empty' "$jfile" 2>/dev/null | tr '\n' ' ' | grep -oE '\{[^{}]*"verdict"[^{}]*\}' | head -1)"
         verdict="$(jq -r '.verdict // empty' <<<"$raw" 2>/dev/null)"
         reason="$(jq -r '.reason // empty' <<<"$raw" 2>/dev/null)"
@@ -430,6 +463,7 @@ grade_one() {
       case "$rc" in
         0) return 0 ;;
         2) GRADER_DETAIL="verify.sh roundtrip hit a broker or credential error (exit 2), log: $log"; return 2 ;;
+        124) GRADER_DETAIL="verify.sh roundtrip timed out after 600s, log: $log"; return 2 ;;
         *) GRADER_DETAIL="verify.sh roundtrip failed (exit $rc), log: $log"; return 1 ;;
       esac ;;
 
@@ -488,7 +522,7 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
 
   # Maven is only required when a selected case compiles, checks the pom, or
   # runs verify.sh. The live-verify banner prints before any case starts so the
-  # operator sees the broker state in the first seconds, not after an hour.
+  # operator sees the broker state in the first seconds, not at the end of the run.
   needs_mvn=0; needs_live=0
   while IFS= read -r row; do
     cid="$(jq -r '.id' <<<"$row")"
@@ -521,8 +555,9 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     run_pass=0; case_infra=0; fail_details=()
     for ((k = 1; k <= RUNS; k++)); do
       # One whole-case retry on an infrastructure failure, each attempt from a
-      # fresh work dir (no mid-conversation resume of a failed turn).
-      attempt_ok=0
+      # fresh work dir (no mid-conversation resume of a failed turn). The retry
+      # is announced, so a flaky leg is distinguishable from a clean one.
+      attempt_ok=0; turn_detail=""
       for attempt in 1 2; do
         RUN_DIR="$WORKDIR/${case_id}/run${k}-try${attempt}"
         WORK="$RUN_DIR/work"
@@ -538,15 +573,20 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
           [[ -n "$sid" ]] && args+=(--resume "$sid")
           ( cd "$WORK" && claude "${args[@]}" \
               < /dev/null > "$RUN_DIR/turn${t}.jsonl" 2>"$RUN_DIR/turn${t}.err" )
-          if ! turn_ok "$RUN_DIR/turn${t}.jsonl"; then turn_infra=1; break; fi
+          if ! turn_ok "$RUN_DIR/turn${t}.jsonl"; then
+            turn_infra=1
+            turn_detail="turn $t (try $attempt): $(turn_reason "$RUN_DIR/turn${t}")"
+            break
+          fi
           # Re-extract after every turn: a print-mode resume can mint a new id.
           new_sid="$(jq -r 'select(.type=="result") | .session_id // empty' "$RUN_DIR/turn${t}.jsonl" | tail -1)"
           [[ -z "$new_sid" ]] && new_sid="$(jq -r 'select(.type=="system" and .subtype=="init") | .session_id // empty' "$RUN_DIR/turn${t}.jsonl" | head -1)"
           [[ -n "$new_sid" ]] && sid="$new_sid"
         done
         if [[ "$turn_infra" -eq 0 ]]; then attempt_ok=1; break; fi
+        [[ "$attempt" -eq 1 ]] && echo "RETRY [$case_id] ($skill) :: $turn_detail"
       done
-      if [[ "$attempt_ok" -ne 1 ]]; then case_infra=1; break; fi
+      if [[ "$attempt_ok" -ne 1 ]]; then case_infra=1; fail_details=("$turn_detail"); break; fi
 
       # Implicit gate: the target skill must have fired, or the output is not
       # attributable to it and every absence grader would pass vacuously.
@@ -585,15 +625,15 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     fi
 
     # Majority vote; with RUNS=1 this is simply "the single run passed".
+    live_tag=""
+    [[ "${LIVE_SKIPPED:-0}" -eq 1 ]] && live_tag=" [live verify skipped: no broker configured]"
     if (( run_pass * 2 > RUNS )); then
-      live_tag=""
-      [[ "${LIVE_SKIPPED:-0}" -eq 1 ]] && live_tag=" [live verify skipped: no broker configured]"
       echo "PASS  [$case_id] ($skill)$live_tag"
       pass=$((pass + 1))
     else
       tag=""
       [[ "$must" == "true" ]] && { must_fail=$((must_fail + 1)); tag=" [must-pass]"; }
-      echo "FAIL$tag  [$case_id] ($skill) ($run_pass/$RUNS runs passed)"
+      echo "FAIL$tag  [$case_id] ($skill) ($run_pass/$RUNS runs passed)$live_tag"
       for d in "${fail_details[@]}"; do echo "      - $d"; done
       fail=$((fail + 1))
     fi
