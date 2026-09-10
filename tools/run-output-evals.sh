@@ -53,7 +53,9 @@
 #                       disclaimer line and the checklist pointer; fails when
 #                       no .java exists. No fields.
 #   compile             `mvn -q -B compile` on every generated pom.xml; all
-#                       must exit 0. No fields.
+#                       must exit 0. Bounded at 600s when GNU timeout (or
+#                       gtimeout) is on PATH; unbounded, with a warning,
+#                       otherwise. No fields.
 #   maven_release_match every generated pom carries the live sol-jcsmp
 #                       <release> from repo1.maven.org metadata. No fields.
 #   llm_judge           one tool-free judge completion on
@@ -137,6 +139,10 @@ done
 # Dependency and auth pre-flight (fail closed), before any mktemp so an early
 # exit leaks nothing. The credential value is never echoed.
 command -v claude >/dev/null 2>&1 || { echo "ERROR: the 'claude' CLI is not on PATH. Install @anthropic-ai/claude-code." >&2; exit 1; }
+# GNU timeout (or Homebrew coreutils' gtimeout) bounds mvn and verify.sh at
+# 600s. Optional: without it those steps run unbounded, and the runner says so
+# below whenever a selected case would use it.
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
 command -v jq     >/dev/null 2>&1 || { echo "ERROR: 'jq' is not on PATH." >&2; exit 1; }
 command -v curl   >/dev/null 2>&1 || { echo "ERROR: 'curl' is not on PATH." >&2; exit 1; }
 # Arithmetic reads a zero or non-numeric RUNS as 0, which skips every run and
@@ -392,8 +398,8 @@ grade_one() {
       [[ -z "$poms" ]] && { GRADER_DETAIL="no generated pom.xml to compile"; return 1; }
       while IFS= read -r pom; do
         n=$((n + 1)); log="$RUN_DIR/mvn-compile-$n.log"
-        if command -v timeout >/dev/null 2>&1; then
-          timeout 600 mvn -q -B -f "$pom" compile > "$log" 2>&1; rc=$?
+        if [[ -n "$TIMEOUT_BIN" ]]; then
+          "$TIMEOUT_BIN" 600 mvn -q -B -f "$pom" compile > "$log" 2>&1; rc=$?
         else
           mvn -q -B -f "$pom" compile > "$log" 2>&1; rc=$?
         fi
@@ -463,8 +469,8 @@ grade_one() {
       [[ -f "$proj/verify.sh" ]] || { GRADER_DETAIL="no verify.sh beside $pom"; return 1; }
       log="$RUN_DIR/live-verify.log"
       LIVE_RAN=1
-      if command -v timeout >/dev/null 2>&1; then
-        ( cd "$proj" && timeout 600 bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
+      if [[ -n "$TIMEOUT_BIN" ]]; then
+        ( cd "$proj" && "$TIMEOUT_BIN" 600 bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
       else
         ( cd "$proj" && bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
       fi
@@ -542,6 +548,9 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     echo "ERROR: 'mvn' is not on PATH and a selected case carries a compile, maven_release_match, or live_verify grader." >&2
     rm -rf "$CLAUDE_CONFIG_DIR" "$WORKDIR"
     exit 1
+  fi
+  if [[ "$needs_mvn" -eq 1 && -z "$TIMEOUT_BIN" ]]; then
+    echo "WARNING: neither 'timeout' nor 'gtimeout' is on PATH; mvn compile and verify.sh run unbounded (install GNU coreutils to cap them at 600s)." >&2
   fi
   if [[ "$needs_live" -eq 1 ]]; then
     LIVE_NEEDED=1

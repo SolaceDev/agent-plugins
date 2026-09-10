@@ -4,7 +4,7 @@ Each plugin ships a trigger eval corpus at `plugins/<plugin>/evals/trigger-evals
 
 ## Running the evals locally
 
-To run the evals manually, you need the `claude` CLI and `jq` on your PATH, plus an exported credential (the runner uses a throwaway config directory with no ambient login). Run the script from the repository root:
+To run the evals manually, you need the `claude` CLI and `jq` on your PATH, plus an exported credential. An existing `claude` login does not satisfy this: the runner uses a throwaway config directory so that only the plugin under test is loaded, and that directory has no login, so `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` must be exported. Run the script from the repository root:
 
 ```shell
 export ANTHROPIC_API_KEY=<your key>          # or CLAUDE_CODE_OAUTH_TOKEN
@@ -49,7 +49,8 @@ Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json
 - The `claude` CLI (Claude Code) on your PATH.
 - `jq` and `curl` on your PATH.
 - `mvn` (Apache Maven) with a JDK 11 or newer on your PATH. Only the cases that compile generated code need it, and the runner checks for it only when such a case is selected.
-- An exported credential, either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. The runner uses a throwaway config directory with no ambient login. Claude seat holders can mint a token with `claude setup-token`.
+- An exported credential, either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. An existing `claude` login does not satisfy this: the runner uses a throwaway config directory so that only the plugin under test is loaded, and that directory has no login. Claude seat holders can mint a token with `claude setup-token`.
+- `timeout` from GNU coreutils (or Homebrew's `gtimeout`) on your PATH, to cap each `mvn compile` and `verify.sh` run at 600 seconds. Optional: without it those steps run unbounded, and the runner prints a warning. On macOS, install it with `brew install coreutils`.
 - Network access to `repo1.maven.org` (Maven Central metadata and dependencies) and `docs.solace.com` (the skills fetch documentation pages).
 - Optional: the four `OUTPUT_EVAL_BROKER_*` variables for the live round trip against a real broker (see below).
 - On macOS, `caffeinate` to keep the machine awake for a full leg.
