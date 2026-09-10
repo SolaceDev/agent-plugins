@@ -167,6 +167,7 @@
       { "type": "assistant_grep", "pattern": "Steps to reproduce", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "Environment", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "assistant_grep", "pattern": "<your name>", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "^[[:space:]]*(\\*\\*)?None(\\*\\*)?\\.?[[:space:]]*$", "expect": "absent", "turn": 2 },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
       { "type": "tool_use", "tool": "Bash", "expect": "absent" }

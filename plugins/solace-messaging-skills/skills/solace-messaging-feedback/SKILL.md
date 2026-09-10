@@ -148,8 +148,8 @@ After the block, on a new line:
 - **Actual behavior / Expected behavior** cover bug-shaped *and* feature-shaped feedback. "I wish it did X" goes in `Expected behavior` with the current state in `Actual behavior`. In the Ideas portal template the same content splits across `What is the challenge?` (the current state) and `Describe your idea` (what the user wants).
 - **Impact** (rendered as `What is the impact?` on the Ideas portal) is omitted when the user gave no signal of cost or friction. Don't invent severity language.
 - **What is the workaround?** (Ideas portal only) is how the user copes today, taken from the session. Use `None` when the session shows no workaround; don't invent one.
-- **Steps to reproduce** is populated from the prompts and skill invocations of the current session when the feedback is bug-shaped. Omit entirely for feature requests and confusion reports, where repro steps don't apply.
-- **Notes** is omitted when empty. Resist padding.
+- **Steps to reproduce** is always present for bug-shaped feedback. Populate it from the prompts and skill invocations of the current session when they exist. When the session holds no such invocation (the user reports the bug from memory), derive the steps from the report itself: what to ask the skill, what to inspect in its output, and what to observe. Omit entirely for feature requests and confusion reports, where repro steps don't apply.
+- **Notes** is omitted when empty: drop the heading. Never write `None`, `N/A`, or other filler under it. The `None` convention belongs only to the Ideas portal workaround field above.
 - **Signature** (Support email only) stays the literal placeholder `<your name>`. Never infer or fill in the sender's name from git config, the environment, or the session. The user types their own name when they review the email before sending.
 
 Omit any field the session doesn't support. Don't fabricate content to fill a slot.
@@ -159,7 +159,7 @@ Omit any field the session doesn't support. Don't fabricate content to fill a sl
 Capture environment metadata best-effort. Any field that can't be determined renders as `unknown`. The skill never errors on env capture. `unknown` is always a valid value.
 
 - **Skill / API**: which skill the user was working with (for example `solace-application-development`, or the specific API such as JCSMP) and, when relevant, `solace-topic-best-practices`. Fall back to `unknown` if unclear.
-- **Plugin version**: read the `version` field from the plugin manifest at `.claude-plugin/plugin.json` under the plugin root, which is two directories above this skill (resolve `../../.claude-plugin/plugin.json` from this skill's base directory). This works both when the plugin is installed and in a development checkout of this repo, where the plugin root is `plugins/solace-messaging-skills/`. Fall back to `unknown` if unreadable or missing.
+- **Plugin version**: read the `version` field from the plugin manifest at `.claude-plugin/plugin.json` under the plugin root, which is two directories above this skill (resolve `../../.claude-plugin/plugin.json` from this skill's base directory). This works both when the plugin is installed and in a development checkout of this repo, where the plugin root is `plugins/solace-messaging-skills/`. Use the Read tool on that one path; the base directory is announced when the skill loads. Do not search the filesystem or run a shell command to find or read the manifest. Fall back to `unknown` if unreadable or missing.
 - **Model**: the active Claude model name or ID is typically surfaced to the assistant at runtime (for example `claude-opus-4-8`). Fall back to `unknown` if not surfaced.
 
 Future env fields are added the same way: attempt, fall back to `unknown`, never block.
@@ -217,6 +217,7 @@ When invoked with no prior activity, the skill doesn't emit an empty draft. Ask 
 ## Guardrails
 
 - **Formatter, not transport.** No issue creation, email sending, draft creation, community or portal posting, API calls, or file writes. The output stays in chat for the user to copy.
+- **Read is the only tool.** The `allowed-tools` list (Read) is the contract, and it exists for the plugin manifest alone. Never run a shell command, search the filesystem, or call any other tool, even when the session makes one available. Everything else in the draft comes from the conversation.
 - **Confirm before drafting a Support email.** The support-contract question in Routing is a mandatory checkpoint. Never draft the Support email until the user confirms they hold a support contract and want the email drafted.
 - **User-visible before send.** Always present the full draft so the user can review and edit before pasting, sending, or posting.
 - **No fabrication.** Omit fields the session doesn't support rather than guessing.
