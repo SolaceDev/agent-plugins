@@ -54,6 +54,7 @@ Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json
 - Network access to `repo1.maven.org` (Maven Central metadata and dependencies) and `docs.solace.com` (the skills fetch documentation pages).
 - Optional: the four `OUTPUT_EVAL_BROKER_*` variables for the live round trip against a real broker (see below).
 - On macOS, `caffeinate` to keep the machine awake for a full leg.
+- On Windows, Git Bash. The repository's `.gitattributes` checks shell scripts out with LF endings, which bash and the byte-identity grader on `verify.sh` both need. Re-clone or run `git checkout -- .` after a checkout made with `core.autocrlf=true`.
 
 Run from the repository root:
 
@@ -64,7 +65,7 @@ export ANTHROPIC_API_KEY=<your key>            # or CLAUDE_CODE_OAUTH_TOKEN
 ./tools/run-output-evals.sh --case appdev-quickstart-implement-full
 ```
 
-Run the suite for both `claude-sonnet-5` and `claude-opus-5` before a PR that affects skill content, and record both results in the PR description, including whether live verify ran or skipped (the runner prints this in its summary). A full leg is a long run; keep the machine awake for it (on macOS, prefix the command with `caffeinate -i`), because a sleep mid-run surfaces as INFRA failures. Each case runs once by default (`OUTPUT_EVAL_RUNS=1`), because a full implement-flow case is expensive; raise it for a majority-vote stability study. `OUTPUT_EVAL_JUDGE_MODEL` (default `claude-sonnet-5`) stays fixed across subject models so leg differences are attributable to the subject. `OUTPUT_EVAL_WORKDIR` receives transcripts and generated projects, and the work directory is kept and printed when the run fails.
+Run the suite for both `claude-sonnet-5` and `claude-opus-5` before a PR that affects skill content, and record both results in the PR description, including whether live verify ran or skipped (the runner prints this in its summary). A full leg is a long run; keep the machine awake for it (on macOS, prefix the command with `caffeinate -i`), because a sleep mid-run surfaces as INFRA failures. A permission denial of a tool the runner grants (Bash, Write, and the rest of its allowlist) is also INFRA: managed settings, hooks, or local command shims can deny a command, the model then improvises, and the result no longer measures the skill. The case line names the denied tool and command; adjust the policy for the run instead of reading the result as a skill failure. Each case runs once by default (`OUTPUT_EVAL_RUNS=1`), because a full implement-flow case is expensive; raise it for a majority-vote stability study. `OUTPUT_EVAL_JUDGE_MODEL` (default `claude-sonnet-5`) stays fixed across subject models so leg differences are attributable to the subject. `OUTPUT_EVAL_WORKDIR` receives transcripts and generated projects, and the work directory is kept and printed when the run fails.
 
 The gate matches the trigger evals: a run passes when at least 90% of cases pass, any infrastructure failure fails the run, and any `must_pass` failure fails the run regardless of the pooled rate. The forbidden-behavior negatives and the compile case are `must_pass`.
 

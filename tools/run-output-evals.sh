@@ -82,8 +82,9 @@
 # Exit codes: 0 = pass rate >= 90% with no infrastructure failures and no
 # must-pass failures; 1 = pass rate below the gate, a must-pass failure, or
 # any infrastructure failure (a missing credential or tool, a malformed
-# corpus, an unparseable judge verdict, or zero discovered cases); an
-# unmeasured case is never absorbed by the gate.
+# corpus, an unparseable judge verdict, a permission denial of a tool the
+# runner grants, or zero discovered cases); an unmeasured case is never
+# absorbed by the gate.
 #
 # Usage: run-output-evals.sh [--model <id>] [--case <id>[,<id>...]]...
 #   --model <id>   Subject model. Defaults to
@@ -112,10 +113,15 @@ RUNS="${OUTPUT_EVAL_RUNS:-1}"
 MODEL="${OUTPUT_EVAL_MODEL:-claude-sonnet-5}"
 JUDGE_MODEL="${OUTPUT_EVAL_JUDGE_MODEL:-claude-sonnet-5}"
 GRADER_TYPES='["assistant_grep","tool_use","file_exists","file_grep","java_disclaimer","compile","maven_release_match","llm_judge","live_verify"]'
-# Headless -p denies unapproved tools, which would distort the measured
-# behavior, so the subject gets the full list the skills declare. Bash is
-# unrestricted by design (agreed for this local-only suite); every invocation
-# runs in a scratch work dir.
+# Headless -p denies tools outside --allowedTools, which would distort the
+# measured behavior, so the subject gets the full list the skills declare. Bash
+# is unrestricted by design (agreed for this local-only suite); every invocation
+# runs in a scratch work dir. The allowlist does not bind the environment:
+# managed settings, hooks, and local command shims can still deny a granted
+# tool, and a denied tool makes the model improvise (a denied `cp` once became
+# a lossy retype of a 55 KB script). Every result event carries
+# permission_denials, so the runner reads it: a denial of a granted tool is
+# INFRA, and a denial of any other tool is tagged on the case line.
 ALLOWED_TOOLS=(Skill Read Glob Grep Write Edit Bash WebFetch TodoWrite)
 
 CASE_FILTER=()
@@ -263,6 +269,21 @@ turn_reason() {
     err="$(tail -2 "$1.err" 2>/dev/null | tr '\n' ' ' | head -c 200)"
     echo "no result event; stderr: ${err:-empty}"
   fi
+}
+
+# denied_tools <transcript>: one "tool<TAB>snippet" line per permission denial
+# in the turn's result event. The snippet is the denied command (or the compact
+# input), cut short, so the case line names what the environment blocked.
+denied_tools() {
+  jq -r 'select(.type=="result") | .permission_denials[]?
+         | [.tool_name, ((.tool_input.command // (.tool_input | tojson)) | .[0:120])] | @tsv' "$1" 2>/dev/null
+}
+
+# granted <tool>: 0 when the tool is in ALLOWED_TOOLS.
+granted() {
+  local a
+  for a in "${ALLOWED_TOOLS[@]}"; do [[ "$a" == "$1" ]] && return 0; done
+  return 1
 }
 
 # find_files <basename-glob>: generated files under the work dir, excluding
@@ -569,12 +590,12 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     max_turns="$(jq -r '.max_agent_turns // 25' <<<"$case_json")"
     NTURNS="$(jq -r '.user_turns | length' <<<"$case_json")"
 
-    run_pass=0; case_infra=0; fail_details=()
+    run_pass=0; case_infra=0; fail_details=(); other_denials=""
     for ((k = 1; k <= RUNS; k++)); do
       # One whole-case retry on an infrastructure failure, each attempt from a
       # fresh work dir (no mid-conversation resume of a failed turn). The retry
       # is announced, so a flaky leg is distinguishable from a clean one.
-      attempt_ok=0; turn_detail=""
+      attempt_ok=0; turn_detail=""; denial_infra=0
       for attempt in 1 2; do
         RUN_DIR="$WORKDIR/${case_id}/run${k}-try${attempt}"
         WORK="$RUN_DIR/work"
@@ -595,11 +616,26 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
             turn_detail="turn $t (try $attempt): $(turn_reason "$RUN_DIR/turn${t}")"
             break
           fi
+          # Permission denials. A denied GRANTED tool means the environment, not
+          # the skill, shaped this output, and the same policy would deny the
+          # retry too, so the case is INFRA at once. A denial of any other tool
+          # is the model's own doing and is only tagged on the case line.
+          while IFS=$'\t' read -r dtool dcmd; do
+            [[ -z "$dtool" ]] && continue
+            if granted "$dtool"; then
+              denial_infra=1
+              turn_detail="turn $t: the environment denied $dtool, a tool the runner grants ($dcmd)"
+            else
+              other_denials+="$dtool"$'\n'
+            fi
+          done < <(denied_tools "$RUN_DIR/turn${t}.jsonl")
+          [[ "$denial_infra" -eq 1 ]] && break
           # Re-extract after every turn: a print-mode resume can mint a new id.
           new_sid="$(jq -r 'select(.type=="result") | .session_id // empty' "$RUN_DIR/turn${t}.jsonl" | tail -1)"
           [[ -z "$new_sid" ]] && new_sid="$(jq -r 'select(.type=="system" and .subtype=="init") | .session_id // empty' "$RUN_DIR/turn${t}.jsonl" | head -1)"
           [[ -n "$new_sid" ]] && sid="$new_sid"
         done
+        [[ "$denial_infra" -eq 1 ]] && break
         if [[ "$turn_infra" -eq 0 ]]; then attempt_ok=1; break; fi
         [[ "$attempt" -eq 1 ]] && echo "RETRY [$case_id] ($skill) :: $turn_detail"
       done
@@ -636,8 +672,11 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
       fi
     done
 
+    denial_tag=""
+    [[ -n "$other_denials" ]] && denial_tag=" [denied outside the allowlist: $(sort -u <<<"$other_denials" | grep . | paste -sd' ' -)]"
+
     if [[ "$case_infra" -eq 1 ]]; then
-      echo "FAIL  [$case_id] ($skill) INFRA${fail_details[0]:+ :: ${fail_details[0]}}"
+      echo "FAIL  [$case_id] ($skill) INFRA${fail_details[0]:+ :: ${fail_details[0]}}$denial_tag"
       fail=$((fail + 1)); infra=$((infra + 1)); continue
     fi
 
@@ -645,12 +684,12 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
     live_tag=""
     [[ "${LIVE_SKIPPED:-0}" -eq 1 ]] && live_tag=" [live verify skipped: no broker configured]"
     if (( run_pass * 2 > RUNS )); then
-      echo "PASS  [$case_id] ($skill)$live_tag"
+      echo "PASS  [$case_id] ($skill)$live_tag$denial_tag"
       pass=$((pass + 1))
     else
       tag=""
       [[ "$must" == "true" ]] && { must_fail=$((must_fail + 1)); tag=" [must-pass]"; }
-      echo "FAIL$tag  [$case_id] ($skill) ($run_pass/$RUNS runs passed)$live_tag"
+      echo "FAIL$tag  [$case_id] ($skill) ($run_pass/$RUNS runs passed)$live_tag$denial_tag"
       for d in "${fail_details[@]}"; do echo "      - $d"; done
       fail=$((fail + 1))
     fi
