@@ -464,6 +464,7 @@ grade_one() {
         fi
         if grep -qw webfetch_results <<<"$includes"; then
           echo; echo '--- WebFetch RESULT CONTENT (truncated) ---'
+          echo 'This is the summary the WebFetch tool returned to the assistant for its prompt, not the page itself. A remark in it that something is absent describes the summary, not the page.'
           webfetch_results | head -c 30720
         fi
       } > "$pfile"

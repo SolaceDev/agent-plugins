@@ -54,7 +54,7 @@ Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json
 - Network access to `repo1.maven.org` (Maven Central metadata and dependencies) and `docs.solace.com` (the skills fetch documentation pages).
 - Optional: the four `OUTPUT_EVAL_BROKER_*` variables for the live round trip against a real broker (see below).
 - On macOS, `caffeinate` to keep the machine awake for a full leg.
-- On Windows, Git Bash. The repository's `.gitattributes` checks shell scripts out with LF endings, which bash and the byte-identity grader on `verify.sh` both need. Re-clone or run `git checkout -- .` after a checkout made with `core.autocrlf=true`.
+- On Windows, Git Bash. The repository's `.gitattributes` checks shell scripts out with LF endings, which bash and the byte-identity grader on `verify.sh` both need. A checkout made with `core.autocrlf=true` before that file existed keeps its CRLF copies, and git reports the tree clean because it treats them as unchanged, so `git pull` and `git checkout -- .` do not rewrite them. Re-clone, or delete the tracked scripts and check them out again: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`.
 
 Run from the repository root:
 

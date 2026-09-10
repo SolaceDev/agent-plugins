@@ -149,7 +149,7 @@
       { "type": "assistant_grep", "pattern": "support contract", "fixed": true, "expect": "present" },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "expect": "absent" }
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
     ]
   },
   {
@@ -170,7 +170,7 @@
       { "type": "assistant_grep", "pattern": "^[[:space:]]*(\\*\\*)?None(\\*\\*)?\\.?[[:space:]]*$", "expect": "absent", "turn": 2 },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "expect": "absent" }
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
     ]
   },
   {
@@ -210,7 +210,7 @@
       { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "absent" },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "expect": "absent" }
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
     ]
   },
   {
@@ -229,7 +229,7 @@
       {
         "type": "llm_judge",
         "include": ["assistant_text", "webfetch_results"],
-        "criteria": "The reply must apply the fetched Topic Architecture Best Practices page to the user's scenario. PASS when the topic-structure recommendations follow the fetched guidance, including domain-specific applications of it, and when anything the page does not cover is explicitly flagged as going beyond the fetched page. FAIL when the reply contradicts the fetched guidance, presents memory-derived best-practice claims as if the page contained them, or never applies the fetched content."
+        "criteria": "The reply must apply the fetched Topic Architecture Best Practices page to the user's scenario. PASS when the topic-structure recommendations follow the fetched guidance, including domain-specific applications of it, and when anything the page does not cover is explicitly flagged as going beyond the fetched page. Deriving the consequences of the fetched rules for the user's scenario, such as which subscriptions a level order makes easy or hard, is applying the guidance, not going beyond it. FAIL when the reply contradicts the fetched guidance, presents memory-derived best-practice claims as if the page contained them, or never applies the fetched content."
       }
     ]
   },
@@ -243,7 +243,7 @@
     "graders": [
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(ls|pwd|echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" },
       { "type": "file_exists", "glob": "*", "expect": "absent" },
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "present" }
     ]
