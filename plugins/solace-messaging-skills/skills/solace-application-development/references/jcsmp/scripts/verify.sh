@@ -7,6 +7,13 @@
 #   Solace Suggested two-project (each app reads its own gitignored config.json):
 #     verify.sh <stage> --subscriber-dir <dir> --publisher-dir <dir>
 #     verify.sh <rr-stage> --replier-dir <dir> --requestor-dir <dir>
+#   Any other app shape (web app / embedded service; the app reads its own config):
+#     verify.sh app
+#       Sources ./verify-hooks.sh (generated with the project) for the ONLY
+#       app-specific facts: START_CMD (starts the app), TRIGGER_CMD (causes one
+#       publish; curl is fine HERE, as the trigger), READY_MARKER, PASS_MARKER.
+#       The observer logic (marker watching, timeouts, env classification, the
+#       0/1/2 exit contract) stays in this script, identical for every shape.
 #
 # What it does (guaranteed pub/sub stage; the direct and request-reply stages are
 # documented at their own functions below): compiles the generated Maven project, then runs the subscriber
@@ -86,6 +93,9 @@ usage:
   # Solace Suggested two-project (each app reads its own gitignored config.json):
   verify.sh <publisher|consumer|roundtrip|direct> --subscriber-dir <dir> --publisher-dir <dir>
   verify.sh <direct-request-reply|guaranteed-request-reply> --replier-dir <dir> --requestor-dir <dir>
+
+  # Any other app shape (web app, embedded service; reads ./verify-hooks.sh):
+  verify.sh app
 EOF
     exit 1
 }
@@ -134,11 +144,64 @@ if [ "$TWO_PROJECT" -eq 1 ]; then
     # project dir (its config.json is read relative to that dir) regardless of cwd.
     SUB_DIR="$(cd "$SUB_DIR" && pwd)"
     PUB_DIR="$(cd "$PUB_DIR" && pwd)"
-else
+elif [ "$STAGE" != "app" ]; then
     [ -z "$HOST" ] && usage
     [ -z "$VPN" ] && usage
     [ -z "$USER_NAME" ] && usage
 fi
+
+# ── Preflight conformance warnings (warn-only; never changes the exit contract) ──
+# Reports the generation-conformance misses that the verification checklist's
+# "Generation conformance" group records: a missing tailored checklist, source
+# files without the AI-assisted disclaimer header, a log4j-core below the 2.17.1
+# Log4Shell floor, and a sol-jcsmp version that drifted from the authoritative
+# repo1.maven.org metadata. Warnings only: the 0/1/2 contract is untouched.
+preflight() {
+    local d="$1"
+    if [ ! -f "$d/solace-verification-checklist.md" ]; then
+        echo "PREFLIGHT WARN: $d/solace-verification-checklist.md is missing (every generation must emit it; implement-mode.md Step 4)" >&2
+    fi
+    if [ -d "$d/src/main/java" ]; then
+        local missing
+        missing=$(grep -rL --include='*.java' 'AI-assisted code. Review before production use.' "$d/src/main/java" 2>/dev/null || true)
+        if [ -n "$missing" ]; then
+            echo "PREFLIGHT WARN: generated source files missing the AI-assisted disclaimer header:" >&2
+            echo "$missing" >&2
+        fi
+    fi
+    if [ -f "$d/pom.xml" ]; then
+        local l4j lo pomv relv
+        l4j=$(grep -A2 '<artifactId>log4j-core</artifactId>' "$d/pom.xml" 2>/dev/null | grep -oE '<version>[^<]+' | head -1 | sed 's/<version>//') || true
+        case "${l4j:-}" in
+            ''|*'${'*) : ;;  # absent or a Maven property; nothing to compare
+            *)
+                lo=$(printf '%s\n' "$l4j" '2.17.1' | sort -V 2>/dev/null | head -1) || true
+                if [ -n "${lo:-}" ] && [ "$lo" != "2.17.1" ]; then
+                    echo "PREFLIGHT WARN: log4j-core $l4j in $d/pom.xml is below the 2.17.1 Log4Shell floor (CVE-2021-44228 family)" >&2
+                fi
+                ;;
+        esac
+        pomv=$(grep -A2 '<artifactId>sol-jcsmp</artifactId>' "$d/pom.xml" 2>/dev/null | grep -oE '<version>[^<]+' | head -1 | sed 's/<version>//') || true
+        case "${pomv:-}" in
+            ''|*'${'*) : ;;  # absent or a Maven property; nothing to compare
+            *)
+                relv=$(curl -s --max-time 5 https://repo1.maven.org/maven2/com/solacesystems/sol-jcsmp/maven-metadata.xml 2>/dev/null | grep -oE '<release>[^<]+</release>' | sed -E 's/<\/?release>//g') || true
+                if [ -n "${relv:-}" ] && [ "$pomv" != "$relv" ]; then
+                    echo "PREFLIGHT WARN: pom sol-jcsmp $pomv in $d differs from the authoritative latest GA $relv (resolve from repo1.maven.org metadata, never solrsearch)" >&2
+                fi
+                ;;
+        esac
+    fi
+}
+if [ "$TWO_PROJECT" -eq 1 ]; then
+    preflight "$SUB_DIR"
+    preflight "$PUB_DIR"
+else
+    preflight "."
+fi
+
+# ── Live-run heads-up (SKILL.md Invariant 6): name the target and the side effects ─
+echo "── Live-run heads-up: stage '$STAGE' starts processes that connect to broker ${HOST:-<the host in each per-project config.json / app config>}; broker-side effects can include provisioned durable queues, opened connections, and published messages ──"
 
 # ── Stage → marker mapping ──────────────────────────────────────────────────────
 # The generated app emits four milestone markers across its two classes
@@ -161,9 +224,10 @@ case "$STAGE" in
     publisher) ;;  # waits for VERIFY: PUBLISH_ACKED in PUB_LOG
     consumer)  ;;  # waits for VERIFY: QUEUE_BOUND in SUB_LOG
     roundtrip) ;;  # waits for VERIFY: MESSAGE_RECEIVED in SUB_LOG
-    direct) ;;                    # NEW (waves 2-4): direct pub/sub stage
-    direct-request-reply) ;;      # NEW (waves 2-4): direct request-reply stage
-    guaranteed-request-reply) ;;  # NEW (waves 2-4): guaranteed request-reply stage
+    direct) ;;                    # direct pub/sub stage
+    direct-request-reply) ;;      # direct request-reply stage
+    guaranteed-request-reply) ;;  # guaranteed request-reply stage
+    app) ;;                       # generic single-app stage driven by ./verify-hooks.sh
     *) echo "unknown stage: $STAGE" >&2; usage ;;
 esac
 
@@ -202,7 +266,7 @@ SHUTDOWN_LINE='Shutdown signal received'
 
 # The baked consumer sample prints this line and exits CLEANLY when the broker
 # disallows client-side endpoint management (session.isCapable(ENDPOINT_MANAGEMENT)
-# is false, consumer sample lines 119-125; implement-mode.md Step 4 Subscriber
+# is false; implement-mode.md Step 4 Subscriber
 # item 3 keeps that behavior in the generated class). On that path the queue can
 # never bind, but the code is NOT the problem: a working app against a
 # restrictively configured broker must classify as an environment failure
@@ -215,15 +279,25 @@ PUBLISH_WAIT_S=30   # foreground-publisher deadline before escalating to a code 
 SHUTDOWN_WAIT_S=15  # bounded post-SIGINT wait before escalating to SIGTERM/SIGKILL
 
 # ── Bounded long-running shutdown (shared by the env-failure teardown and STAGE D) ─
-# Send SIGINT to the PID passed as $1, poll up to SHUTDOWN_WAIT_S for the JVM to
-# exit on its own, then escalate SIGTERM then SIGKILL. A JVM that hangs after
-# SIGINT is an anticipated failure mode, so NO teardown path may use a bare
-# unbounded `wait`. Sets the global `rc` to the process's real exit code, or to
-# the synthetic 124 when the run hung and had to be force-killed (124 is never a
-# clean exit). The PID is a parameter so every long-running stage (the guaranteed
-# subscriber, and the request/reply repliers added in later plans) can reuse it.
+# Send SIGINT to the process GROUP of the PID passed as $1, poll up to
+# SHUTDOWN_WAIT_S for the JVM to exit on its own, then escalate SIGTERM then
+# SIGKILL (also group-directed). A JVM that hangs after SIGINT is an anticipated
+# failure mode, so NO teardown path may use a bare unbounded `wait`. Sets the
+# global `rc` to the process's real exit code, or to the synthetic 124 when the
+# run hung and had to be force-killed (124 is never a clean exit). The PID is a
+# parameter so every long-running stage (the guaranteed subscriber, the
+# request/reply repliers, and the app stage) can reuse it.
+#
+# Why the kills target "-$1" (the group), not "$1": every launch site
+# backgrounds its process under `set -m`, so each recorded PID leads its own
+# process group. For the mvn stages the group is just the JVM, so this is
+# equivalent to a PID kill. For the app stage the target may be a `bash -c`
+# wrapper: macOS's system bash 3.2 keeps the wrapper alive for a compound
+# START_CMD (bash 4.4+ execs the final command), and a PID-directed kill would
+# then stop only the wrapper and orphan the app underneath it. Group-directed
+# signals reach both.
 shutdown_long_running() {
-    kill -INT "$1" 2>/dev/null || true
+    kill -INT -- "-$1" 2>/dev/null || true
 
     rc=0
     local hung=0
@@ -239,14 +313,17 @@ shutdown_long_running() {
     if [ "$hung" -eq 1 ]; then
         # The process did not honour SIGINT within the deadline; escalate and fail.
         echo "── Process did not exit ${SHUTDOWN_WAIT_S}s after SIGINT; escalating (SIGTERM, then SIGKILL) ──" >&2
-        kill -TERM "$1" 2>/dev/null || true
+        kill -TERM -- "-$1" 2>/dev/null || true
         sleep 2
-        kill -KILL "$1" 2>/dev/null || true
+        kill -KILL -- "-$1" 2>/dev/null || true
         wait "$1" 2>/dev/null || true
         rc=124  # synthetic "timed out" code; never a clean exit
     else
         # The process exited within the deadline; capture its real exit code.
         wait "$1" 2>/dev/null || rc=$?
+        # Sweep any group member that outlived the leader (a wrapper's app child);
+        # once the whole group is gone this is a no-op.
+        kill -KILL -- "-$1" 2>/dev/null || true
     fi
 }
 
@@ -261,6 +338,8 @@ if [ "$TWO_PROJECT" -eq 1 ]; then
             exit 1
         fi
     done
+elif [ "$STAGE" = "app" ] && [ ! -f pom.xml ]; then
+    echo "── No pom.xml in the working directory; skipping the compile step (the app stage builds through its own START_CMD) ──"
 else
     echo "── Compiling (mvn -q compile) ─────────────────────────────────────"
     if ! mvn -q compile; then
@@ -281,10 +360,18 @@ PUB_LOG="$(mktemp)"
 # a set -e exit), the backgrounded subscriber JVM would otherwise keep running
 # detached. It holds the EXCLUSIVE queue flow, so an orphan breaks every later
 # verify.sh run until manually killed, and both mktemp logs would leak. The
-# EXIT trap makes teardown unconditional; for processes already waited on and
-# logs already removed it is a harmless no-op.
+# EXIT trap covers every graceful exit path: bash runs it on normal exit, on
+# set -e exits, and on untrapped SIGINT/SIGTERM (verified on bash 3.2 through
+# 5.2). SIGKILL is the one residual: no trap can run, and `set -m` has put each
+# child in its own process group, so a hard kill of this script's group cannot
+# reach them. That orphan risk is inherent to the set -m SIGINT-delivery
+# mechanism (header note) and cannot be closed from inside the script. The
+# kills are group-directed for the same reason shutdown_long_running's are (see
+# its note). For processes already waited on and logs already removed the trap
+# is a harmless no-op.
 cleanup() {
-    kill -TERM "${SUB_PID:-}" "${PUB_PID:-}" 2>/dev/null || true
+    if [ -n "${SUB_PID:-}" ]; then kill -TERM -- "-$SUB_PID" 2>/dev/null || true; fi
+    if [ -n "${PUB_PID:-}" ]; then kill -TERM -- "-$PUB_PID" 2>/dev/null || true; fi
     rm -f "${SUB_LOG:-}" "${PUB_LOG:-}"
 }
 trap cleanup EXIT
@@ -456,11 +543,6 @@ else
 fi
 }  # end run_guaranteed_stage
 
-# ── Placeholder stages (NOT implemented in this plan; filled by waves 2-4) ───────
-# The dispatch wiring is in place so a later per-pattern increment drops a real
-# body here without touching the dispatch front or the byte-stable guaranteed
-# flow. Until then each stub echoes that it is not implemented and exits non-zero
-# so no new pattern behavior is claimed.
 # ── run_direct_stage: the direct (at-most-once) pub/sub flow (D-04/D-05) ──────────
 # Direct messaging is at-most-once: no broker ACK, no redelivery, so a message
 # published to a not-yet-propagated subscription is simply dropped. This stage drives
@@ -779,16 +861,128 @@ run_request_reply_stage() {
     fi
 }
 
+# ── run_app_stage: the generic single-app flow (web app / embedded service) ──────
+# The shape-agnostic observer. The generated ./verify-hooks.sh carries the ONLY
+# app-specific facts (how to start the app, how to cause one publish, which leaf
+# markers gate readiness and prove the pass); this function keeps the universal
+# logic: marker watching in the app's own captured output, bounded waits, the
+# ENV_SIGNATURES classification, and the shared 0/1/2 exit contract. The hooks
+# still run as generated shell by design (they are generation output, exactly
+# like the app they drive), but in a CHILD bash: only the four declared values
+# are imported, so a stray extra line in the generated file cannot clobber the
+# observer's own state. TRIGGER_CMD may be a curl against the
+# app's own API — the curl is the TRIGGER; the markers render the VERDICT. The
+# app stage does not require the samples' shutdown-hook proof line: an embedded
+# app may manage shutdown its own way, so a pass is READY_MARKER + PASS_MARKER
+# observed and a bounded teardown.
+run_app_stage() {
+    if [ ! -f ./verify-hooks.sh ]; then
+        echo "app stage needs ./verify-hooks.sh (generated with the project; defines START_CMD, TRIGGER_CMD, READY_MARKER, PASS_MARKER)" >&2
+        exit 1
+    fi
+    # Source the hooks in a CHILD bash and import ONLY the four contract values.
+    # A hooks file that cds, sets observer state (status, TIMEOUT_S, SUB_LOG,
+    # ...), or redefines a function affects only the child, never this scope.
+    # The child routes the sourcing's stdout to stderr so stray output stays
+    # visible but is never eval'd; only declare -p's safely-quoted assignments
+    # come back. A missing value is caught by the loop below.
+    eval "$(bash -c '. ./verify-hooks.sh >&2; declare -p START_CMD TRIGGER_CMD READY_MARKER PASS_MARKER 2>/dev/null' || true)"
+    local v
+    for v in START_CMD TRIGGER_CMD READY_MARKER PASS_MARKER; do
+        [ -n "${!v:-}" ] || { echo "verify-hooks.sh must set $v" >&2; exit 1; }
+    done
+
+    # Start the app (long-running, the SIGINT target); job control per the header note.
+    echo "── Starting app (START_CMD from verify-hooks.sh), watching for: $READY_MARKER ──"
+    set -m
+    bash -c "$START_CMD" >"$SUB_LOG" 2>&1 &
+    SUB_PID=$!
+    set +m
+
+    local ready=0
+    local deadline=$(( SECONDS + TIMEOUT_S ))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if grep -qE "$ENV_SIGNATURES" "$SUB_LOG"; then
+            status=2  # environment failure; bypass the fix loop
+            break
+        fi
+        if grep -qF "$ENDPOINT_DENIED" "$SUB_LOG"; then
+            status=2  # broker disallows client-side endpoint management; environment, not code
+            break
+        fi
+        if grep -qF "$READY_MARKER" "$SUB_LOG"; then
+            ready=1
+            break
+        fi
+        if ! kill -0 "$SUB_PID" 2>/dev/null; then
+            break  # app exited before readiness (code failure, status stays 1)
+        fi
+        sleep 1
+    done
+
+    if [ "$status" -eq 2 ]; then
+        shutdown_long_running "$SUB_PID"
+    elif [ "$ready" -eq 1 ]; then
+        # Settle window, then the trigger. Bounded like STAGE B's foreground
+        # publisher: a trigger that never returns (a wedged app that accepts the
+        # request and never responds) must not hang the unattended script, so it
+        # runs backgrounded in its own group, polled to PUBLISH_WAIT_S, then
+        # escalated SIGTERM/SIGKILL. The marker watch below still runs after a
+        # hung trigger: the trigger's exit code was never part of the verdict
+        # (the markers are), and the publish may have landed even if the HTTP
+        # response never came back. Reusing PUB_PID (not a new name) keeps the
+        # EXIT trap's group-kill coverage over an orphaned trigger.
+        sleep 2
+        echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
+        set -m
+        bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
+        PUB_PID=$!
+        set +m
+        local trig_deadline=$(( SECONDS + PUBLISH_WAIT_S ))
+        while kill -0 "$PUB_PID" 2>/dev/null; do
+            if [ "$SECONDS" -ge "$trig_deadline" ]; then
+                echo "── Trigger did not exit within ${PUBLISH_WAIT_S}s; escalating (SIGTERM, then SIGKILL) ──" >&2
+                kill -TERM -- "-$PUB_PID" 2>/dev/null || true
+                sleep 2
+                kill -KILL -- "-$PUB_PID" 2>/dev/null || true
+                break
+            fi
+            sleep 1
+        done
+        wait "$PUB_PID" 2>/dev/null || true
+
+        local pass_deadline=$(( SECONDS + TIMEOUT_S ))
+        while [ "$SECONDS" -lt "$pass_deadline" ]; do
+            if grep -qE "$ENV_SIGNATURES" "$SUB_LOG"; then
+                status=2
+                break
+            fi
+            if grep -qF "$PASS_MARKER" "$SUB_LOG"; then
+                status=0  # the pass marker appeared in the app's own captured output
+                break
+            fi
+            if ! kill -0 "$SUB_PID" 2>/dev/null; then
+                break  # app died before the pass marker (code failure)
+            fi
+            sleep 1
+        done
+
+        # Bounded teardown (SIGINT, then escalate); no shutdown-line requirement here.
+        shutdown_long_running "$SUB_PID"
+    else
+        shutdown_long_running "$SUB_PID"
+    fi
+}
+
 # ── Stage-dispatch front ─────────────────────────────────────────────────────────
-# Route the validated stage to its per-pattern function. The guaranteed arm holds
-# the byte-stable run_guaranteed_stage; the three new arms route to placeholder
-# functions until waves 2-4 fill them. publisher|consumer|roundtrip stay spelled
-# exactly (referenced by implement-mode.md Step 5).
+# Route the validated stage to its per-pattern function. publisher|consumer|roundtrip
+# stay spelled exactly (referenced by implement-mode.md Step 5).
 case "$STAGE" in
     publisher|consumer|roundtrip)  run_guaranteed_stage ;;
     direct)                        run_direct_stage ;;
     direct-request-reply)          run_request_reply_stage direct ;;
     guaranteed-request-reply)      run_request_reply_stage guaranteed ;;
+    app)                           run_app_stage ;;
     *) echo "unknown stage: $STAGE" >&2; usage ;;
 esac
 
@@ -801,7 +995,13 @@ cat "$PUB_LOG"
 echo "────────────────────────────────────────────────────────────────────"
 
 case "$status" in
-    0) echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the subscriber's shutdown hook ran ('$SHUTDOWN_LINE'), and the subscriber exited cleanly (exit 0 or 130)." ;;
+    0)
+        if [ "$STAGE" = "app" ]; then
+            echo "PASS (app): the readiness and pass markers were observed in the app's own captured output, and the app was stopped with a bounded teardown."
+        else
+            echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the subscriber's shutdown hook ran ('$SHUTDOWN_LINE'), and the subscriber exited cleanly (exit 0 or 130)."
+        fi
+        ;;
     2) echo "ENV FAILURE ($STAGE): a JCSMP connection/auth signature matched in a process log (broker or credentials are wrong, not the code). NOT entering the fix loop." >&2 ;;
     *)
         if [ "$DIRECT_ZERO_RECEIPT" -eq 1 ]; then

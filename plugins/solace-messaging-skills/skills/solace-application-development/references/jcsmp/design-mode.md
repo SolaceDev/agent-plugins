@@ -6,12 +6,9 @@ The output of this mode is a filled-in design summary the developer can carry in
 
 ## Step 0: Confirm broker access and grounding
 
-Before triaging anything, confirm two things (skip whichever the developer already has):
+Before triaging anything, confirm the developer has access to a reachable broker. Confirm that they HAVE one; Design mode only records the broker TYPE (for example, Solace Cloud) in the summary, so do NOT ask them to paste connection details (host, message VPN, client username, password) into the chat. Those values are handled later in Implement mode, where Solace Suggested credentials go only into a gitignored `config.json` (Quickstart falls back to CLI args when it is absent). A broker discovered running in the environment (a local container, an existing config file) is a fact to report, never an answer: still confirm which broker the developer wants to target.
 
-- The developer has access to a reachable broker. Confirm that they HAVE one; Design mode only records the broker TYPE (for example, Solace Cloud) in the summary, so do NOT ask them to paste connection details (host, message VPN, client username, password) into the chat. Those values are handled later in Implement mode, where Solace Suggested credentials go only into a gitignored `config.json` (Quickstart falls back to CLI args when it is absent).
-- The developer understands the basic Solace model (broker, topics, queues, publish/subscribe).
-
-If either is missing, route through `prerequisites.md` first (Core Concepts grounding and broker acquisition, Solace Cloud recommended), then return here.
+If the developer has no reachable broker, route through `prerequisites.md` first (broker acquisition, Solace Cloud recommended), then return here.
 
 ## Step 1: Read the prompt for stated intent before asking anything
 
@@ -30,6 +27,8 @@ If a row matches, or if your own judgment maps an unmatched prompt cleanly to on
 
 **Recommend path (intent is clear).** Recommend the leaf in ONE line and confirm, for example "Sounds like Guaranteed Pub/Sub (fan-out), confirm?", then proceed on the developer's confirm. One line plus one confirm, not a rationale paragraph and not a silent zero-confirm jump.
 
+**Fully-specified path (the prompt answers every applicable tree question).** When the prompt resolves the leaf AND answers every Step 2 question that applies to that leaf, skip the separate leaf confirm. Derive the full summary, present it (Step 4), and let the close-out question carry the single confirm: one confirm covers the leaf and the design. Do not ask a leaf confirm and then a close-out confirm; that is two questions where the prompt earned one.
+
 **Partial-intent path (intent is partial).** When the prompt answers some branches but not all (for example it says "request a reply" but not direct vs guaranteed), lock the branches the prompt already answers and ask ONLY the remaining tree questions, in the Step 2 order, skipping every question the prompt already settled. Reach a leaf, then confirm it the same one-line way.
 
 **Unclear path (no stated intent).** When the prompt states no usable intent, walk all four tree questions in Step 2 order to reach a leaf.
@@ -38,7 +37,7 @@ If a row matches, or if your own judgment maps an unmatched prompt cleanly to on
 
 ## Step 2: Walk the decision tree to a leaf
 
-Ask only the questions the prompt left open, in this order. Read each grounding link only when that question comes up; link the canonical doc and state the decision in one line, never paraphrase the doc.
+Ask only the questions the prompt left open, in this order. Before you answer each question you do walk, WebFetch its grounding page first — even when the prompt pre-answers the question — then link the canonical doc and state the decision in one line, quoting one line from the fetched page; never paraphrase guidance the page does not contain. A page you did not fetch in this session must not appear in the summary's Grounding docs field.
 
 1. **Interaction shape: request-reply or publish/subscribe?** Grounded in [Message Exchange Patterns](https://docs.solace.com/Get-Started/message-exchange-patterns.md). Decision: a request that expects a correlated reply is Request-Reply; an event fanned out to one or many independent consumers is publish/subscribe.
 2. **Delivery guarantee: direct or guaranteed?** This ONE question applies to both interaction shapes, so ask it next regardless of the answer to question 1. Grounded in [Message Delivery Modes](https://docs.solace.com/Get-Started/message-delivery-modes.md). Decision: direct is fire-and-forget with no broker-side persistence, for high-rate flows that tolerate occasional loss; guaranteed (PERSISTENT) is persisted and survives consumer downtime.
@@ -84,7 +83,7 @@ Solace JCSMP Design Summary
 - Consumption endpoint: <direct topic subscription | durable queue + topic subscription | temporary reply queue + FlowReceiver | n/a>
 - Auth:                Basic username/password
 - Broker:              Solace Cloud
-- Grounding docs:      <the canonical pages this design referenced>
+- Grounding docs:      <ONLY the canonical pages actually WebFetched in this session; `none fetched` when none was>
 ```
 
 The eight fields are fixed: Pattern, Delivery, Access type, Topic, Consumption endpoint, Auth, Broker, Grounding docs. Formatting is at your discretion, but always present all eight, every run, with explicit `n/a` where a field does not apply. The eight field NAMES are fixed; the field VALUES record the design's actual choices, defaulting to the base-leaf shape and holding the variant topology when the design deviates (the variant path in Step 1). The `Pattern` value stays one of the six leaf strings verbatim even for a variant; the deviation lives in the topology fields (`Consumption endpoint`, and `Delivery` or `Access type` where relevant), never in a new leaf string.
@@ -98,6 +97,6 @@ Field semantics:
 - **Topic.** The recommended topic string or hierarchy, derived by applying the solace-topic-best-practices skill to the use case (not chosen by interrogating the developer). Always publish to topics; never address a queue directly.
 - **Auth.** Basic username/password.
 - **Broker.** Default to `Solace Cloud` and record it without asking. Switch to another type (Software Broker or Appliance) ONLY if the developer explicitly insists; otherwise leave it as `Solace Cloud`.
-- **Grounding docs.** The canonical pages this design referenced.
+- **Grounding docs.** ONLY the pages this session actually WebFetched. Never list a page you did not fetch: a citation without a fetch is fabricated grounding. Write `none fetched` when no page was fetched; that is an honest value, an unfetched citation is not.
 
-After presenting the summary in chat, close Design mode explicitly so the developer knows exactly what happens next; do NOT just display the summary and stop. If the design is a variant of its leaf, state the deviation and its rationale in one line here too, so the developer approves the actual topology (not just the leaf name) before it is built. Ask them directly, in one step, both whether they are happy with this design AND whether to save it to `solace-design.md` in their project (for example: "Happy with this design? If so, I can save it to `solace-design.md` and move into Implement mode to generate the runnable Maven project."). Write the file only on their OK; never write it unprompted. Once they confirm, state the next step plainly: the work moves into Implement mode, which generates the runnable Maven project from this summary. Implement mode treats this summary, whether it lives in the chat or in the saved `solace-design.md`, as its input contract.
+After presenting the summary in chat, close Design mode explicitly so the developer knows exactly what happens next; do NOT just display the summary and stop. On the fully-specified path (Step 1) this close-out is the ONLY confirm of the run; it carries the leaf confirmation too. If the design is a variant of its leaf, state the deviation and its rationale in one line here too, so the developer approves the actual topology (not just the leaf name) before it is built. Ask them directly, in one step, both whether they are happy with this design AND whether to save it to `solace-design.md` in their project (for example: "Happy with this design? If so, I can save it to `solace-design.md` and move into Implement mode to generate the runnable Maven project."). Write the file only on their OK; never write it unprompted. Once they confirm, state the next step plainly: the work moves into Implement mode, which generates the runnable Maven project from this summary. Implement mode treats this summary, whether it lives in the chat or in the saved `solace-design.md`, as its input contract. Implement mode OPENS with its own Step 0 door question (Quickstart, Solace Suggested, or Custom), asked before any broker details are requested or accepted; an existing `config.json` or a running broker does not answer it, so ask it on the way in.

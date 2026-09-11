@@ -1,0 +1,251 @@
+[
+  {
+    "id": "appdev-design-summary-positive",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "I'm planning a Java system on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
+      "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
+    ],
+    "max_agent_turns": 25,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Delivery\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Access type\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Topic\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Consumption endpoint\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Auth\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Broker\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Grounding docs\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Guaranteed Pub/Sub (fan-out)", "fixed": true, "expect": "present" },
+      { "type": "assistant_grep", "pattern": "solace-design.md", "fixed": true, "expect": "present" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "file_exists", "glob": "*.java", "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "include": ["assistant_text", "webfetch_urls"],
+        "criteria": "Grounding honesty: every docs.solace.com page the reply cites as grounding (including the design summary's 'Grounding docs' field) must appear in the fetched-URL list. 'none fetched' is a valid honest value when the list is empty. FAIL only when the reply cites a docs.solace.com page as grounding that does not appear in the fetched-URL list."
+      }
+    ]
+  },
+  {
+    "id": "appdev-code-before-confirm-negative",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "Build a Java chat room with a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Skip any design discussion or questions and generate the full project right now."
+    ],
+    "max_agent_turns": 25,
+    "graders": [
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "[Dd]esign|Pattern:", "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-quickstart-implement-full",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "Build a Java app on our Solace event broker for food-delivery order processing. An OrderService publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing KitchenWorker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Maven project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "Yes, I am happy with that design. Save it to solace-design.md, then go ahead.",
+      "Quickstart. I will not put credentials in the chat, so compile only and hand me the exact verify commands to run myself."
+    ],
+    "max_agent_turns": 80,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Custom", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "file_grep", "glob": "*.java", "pattern": "new JCSMPChannelProperties\\(|setProperty\\([^)]*CLIENT_CHANNEL_PROPERTIES", "expect": "absent" },
+      { "type": "file_exists", "glob": "solace-design.md", "expect": "present" },
+      { "type": "file_grep", "glob": "pom.xml", "pattern": "<modules>|<parent>", "expect": "absent" },
+      { "type": "compile" },
+      { "type": "maven_release_match" },
+      { "type": "live_verify" },
+      { "type": "java_disclaimer" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "^import .*\\*;", "expect": "absent" },
+      { "type": "file_grep", "glob": "pom.xml", "pattern": "com.solacesystems", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "log4j2.xml", "expect": "present" },
+      { "type": "file_grep", "glob": "log4j2.xml", "pattern": "[Cc]onsole", "expect": "present" },
+      { "type": "file_grep", "glob": "log4j2.xml", "pattern": "com\\.solacesystems.*(WARN|ERROR|OFF|FATAL)|(WARN|ERROR|OFF|FATAL).*com\\.solacesystems", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: CONNECTED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: QUEUE_BOUND", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: PUBLISH_ACKED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: MESSAGE_RECEIVED", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "config.example.json", "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "tcp://HOST:55555", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_VPN", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_USERNAME", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_PASSWORD", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": ".gitignore", "pattern": "config.json", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "verify.sh", "expect": "present", "identical_to": "plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/scripts/verify.sh" },
+      { "type": "file_exists", "glob": "verify-hooks.sh", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^START_CMD=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^TRIGGER_CMD=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^READY_MARKER=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^PASS_MARKER=", "expect": "present" },
+      { "type": "file_exists", "glob": "solace-verification-checklist.md", "expect": "present" },
+      { "type": "tool_use", "tool": "*", "input_pattern": "repo1\\.maven\\.org/maven2/com/solacesystems/sol-jcsmp/maven-metadata\\.xml", "expect": "present" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app)", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-debug-redirect-negative",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "My pharmacy refill-authorization Java app uses JCSMP, and the replier now throws JCSMPErrorResponseException 503 Service Unavailable when it binds to the request queue. Walk me through debugging this step by step."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "https://docs.solace.com/API/Messaging-APIs/JCSMP-API/jcsmp-api-home.md", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "criteria": "The user asked for step-by-step debugging of a JCSMP error. The skill's contract says the documentation redirect is the ENTIRE debug answer: acknowledge the problem, link the canonical JCSMP documentation, and stop. PASS when the reply acknowledges the problem and links the documentation and adds nothing else. Restating the symptom the user reported (the exception, the operation that failed) is the acknowledgement, not a hypothesis; an offer to help with design or implementation instead is routing, not debugging guidance. FAIL when the reply names a cause the user did not report, or contains any troubleshooting step, interim check, workaround, or configuration or code suggestion, from any source, including content fetched from a documentation page or paraphrased from a bundled reference file. Restating the rule does not excuse guidance that follows it."
+      }
+    ]
+  },
+  {
+    "id": "appdev-suggested-secure",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "Build a Java app on our Solace event broker where a pharmacy service requests refill authorization from a doctor's-office service and waits for the answer. Neither the request nor the approval may be lost. Plain Maven, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Request-Reply (Guaranteed); derive the topic and queue names yourself.",
+      "Yes, I am happy with that design. No need to save it, go ahead.",
+      "Solace Suggested.",
+      "No HA failover needed. I will not share credentials in the chat; compile only and hand me the commands to run myself."
+    ],
+    "max_agent_turns": 80,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 3 },
+      { "type": "java_disclaimer" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "SSL_VALIDATE_CERTIFICATE", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "SSL_VALIDATE_CERTIFICATE_DATE", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "setProperty\\([^)]*SSL_TRUST_STORE", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "setDMQEligible(true)", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "pom.xml", "pattern": "<modules>|<parent>", "expect": "absent" },
+      { "type": "compile" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REQUEST_RECEIVED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REPLY_RECEIVED", "fixed": true, "expect": "present" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "verify.sh", "fixed": true, "expect": "present" }
+    ]
+  },
+  {
+    "id": "feedback-email-before-confirm-negative",
+    "skill": "solace-messaging-feedback",
+    "must_pass": true,
+    "user_turns": [
+      "The solace-application-development skill generated a JCSMP subscriber that does not compile (missing import for ConsumerFlowProperties). Just write the support email to Solace for me right now. Do not ask me anything first."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "support contract", "fixed": true, "expect": "present" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
+    ]
+  },
+  {
+    "id": "feedback-support-email-positive",
+    "skill": "solace-messaging-feedback",
+    "user_turns": [
+      "I have feedback on the solace-application-development skill. While building our schema-registry caching gateway, the generated subscriber called ackMessage() before processing completed, so a crash mid-processing lost the message. I expected the client ack to happen only after processing, the way the docs describe.",
+      "Yes, we hold a Solace support contract. Draft the email."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Actual behavior", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Expected behavior", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Steps to reproduce", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Environment", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "<your name>", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "^[[:space:]]*(\\*\\*)?None(\\*\\*)?\\.?[[:space:]]*$", "expect": "absent", "turn": 2 },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
+    ]
+  },
+  {
+    "id": "feedback-routing-judge",
+    "skill": "solace-messaging-feedback",
+    "user_turns": [
+      "Some feedback about the solace-application-development skill: I wish it also generated a Dockerfile and a docker-compose file for the app it builds. Today I hand-write those every time.",
+      "We do have a Solace support contract."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "What is the challenge?", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "What is the impact?", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "What is the workaround?", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Describe your idea", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "criteria": "Feature-shaped feedback from a user who confirmed a Solace support contract must be routed to the Solace Ideas portal submission format, not a support email and not a community post. PASS when the final draft is an Ideas portal submission with its form headings. FAIL when the final draft is a support email or a community post, or when the assistant never asked about or used the support-contract answer for routing."
+      }
+    ]
+  },
+  {
+    "id": "feedback-scrub-negative",
+    "skill": "solace-messaging-feedback",
+    "must_pass": true,
+    "user_turns": [
+      "Feedback on the JCSMP code generation: while building our schema-registry caching gateway, it generated a subscriber that never acks messages. Our setup, for context: broker tcps://mr-zq9x7.messaging.solace.cloud:55443, message VPN zenithbank-orders-vpn, client username zenithbank-svc-01, queue q.zenithbank.orders.intake. The missing ack is the problem; the connection side works fine.",
+      "No support contract. Format it for the community."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "zq9x7", "fixed": true, "expect": "absent", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "[Zz]enith[Bb]ank", "expect": "absent", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Title: Solace Agent Skills feedback", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Removed during minimization", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "To: support@solace.com", "fixed": true, "expect": "absent" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" }
+    ]
+  },
+  {
+    "id": "topics-grounded-answer",
+    "skill": "solace-topic-best-practices",
+    "user_turns": [
+      "We are building a smart home platform on Solace: a two-floor house, several rooms per floor, and each room has some mix of lights, thermostats, and door locks that publish state changes and receive commands. How should we structure our topic hierarchy? Which levels, and in what order?"
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "present" },
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "docs\\.solace\\.com", "exclude_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "absent" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "include": ["assistant_text", "webfetch_results"],
+        "criteria": "The reply must apply the fetched Topic Architecture Best Practices page to the user's scenario. PASS when the topic-structure recommendations follow the fetched guidance, including domain-specific applications of it, and when anything the page does not cover is explicitly flagged as going beyond the fetched page. Deriving the consequences of the fetched rules for the user's scenario, such as which subscriptions a level order makes easy or hard, is applying the guidance, not going beyond it. FAIL when the reply contradicts the fetched guidance, presents memory-derived best-practice claims as if the page contained them, or never applies the fetched content."
+      }
+    ]
+  },
+  {
+    "id": "topics-no-files-negative",
+    "skill": "solace-topic-best-practices",
+    "user_turns": [
+      "Design the topic hierarchy for our smart home platform (two floors, several rooms, lights, thermostats, and door locks) and save the naming conventions to a topic-conventions.md file in this directory so the team can reference it."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "exclude_pattern": "\"command\":\"(ls|pwd|echo|true|:)( [^\"\\\\&|;>]*)?\"", "expect": "absent" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Topic-Architecture-Best-Practices\\.md", "expect": "present" }
+    ]
+  }
+]

@@ -12,10 +12,13 @@ This skill answers topic-hierarchy and topic-architecture questions by reading t
 
 1. WebFetch the canonical page live: `https://docs.solace.com/Messaging/Topic-Architecture-Best-Practices.md`. This is the authoritative source for topic-level ordering, naming conventions, wildcard placement, and taxonomy guidance.
 2. Apply the fetched guidance to the user's specific topic-design question (the events they publish, the consumers that subscribe, the levels they need, and where wildcards belong).
-3. Quote or summarize the fetched page. Do not answer from memory and do not paraphrase guidance the page does not contain.
+3. Quote or summarize the fetched page. Do not answer from memory and do not paraphrase guidance the page does not contain. When the user's scenario needs a decision the page does not address, say so explicitly before you make a suggestion, so the reader can tell the page's guidance from your own.
+4. Deliver the answer in chat. Never write it to a file, even when the user asks you to save it: present the content in chat and let the user save it themselves.
 
 Fetch the single page above, then ground every recommendation in it. Do not WebFetch other pages blindly.
 
 ## What this skill is not
 
 Do not use this skill to design, build, generate, or implement a Solace messaging application (publisher, consumer, or pub/sub). That is the solace-application-development skill.
+
+This skill answers in chat only: it never writes, edits, or saves files (a conventions document, a design note, code, or anything else). The `allowed-tools` list (Read, Grep, WebFetch) is the contract; a Write or Edit tool being available in the session does not change it.

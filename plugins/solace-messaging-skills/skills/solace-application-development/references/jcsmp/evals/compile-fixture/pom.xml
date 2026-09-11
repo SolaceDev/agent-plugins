@@ -13,8 +13,11 @@
     The sol-jcsmp version is intentionally version-free here (Invariant 3): the
     property default below is a NON-NUMERIC placeholder token that compile.sh
     overrides at run time with the live <release> from Maven Central metadata.
-    No sol-jcsmp version number is committed anywhere. log4j2 is the deliberate
-    pinned exception (2.26.0, at/above the 2.17.1 Log4Shell floor).
+    No sol-jcsmp version number is committed anywhere. The log4j2 version below
+    is FIXTURE-ONLY tooling (a concrete number so this CI fixture compiles
+    deterministically, at/above the 2.17.1 Log4Shell floor); it is NOT a skill
+    rule. Generated projects resolve their logging backend live per
+    implement-mode.md Step 3 and never pin it.
   -->
 
   <groupId>com.solace.samples</groupId>
