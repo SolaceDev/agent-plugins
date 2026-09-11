@@ -1,0 +1,4 @@
+# Shell scripts must check out with LF endings on every platform. Bash rejects
+# CRLF scripts, and the output evals compare a generated verify.sh byte for byte
+# against the bundled reference copy.
+*.sh text eol=lf
