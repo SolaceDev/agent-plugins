@@ -1,50 +1,38 @@
 """
 Shared connection-config helper for the Python reference samples.
 
-Any generated adaptation of this sample MUST begin with the exact line:
-  AI-assisted code. Review before production use.
-(This reference sample itself carries no such header by design.)
-
-Copied into a generated project as solace_connection_config.py (a Python module
-name needs underscores, not hyphens); every sample imports it with
-  from solace_connection_config import SolaceConnectionConfig
-
-Loads connection properties and turns them into the properties dict that
+Loads connection properties into the dict that
 MessagingService.builder().from_properties(...) takes. Source precedence:
-  1. a config.json in the working directory (the project root), when present.
-     Its keys are Solace Python API property-name strings, the VALUES of the
-     constants in solace.messaging.config.solace_properties (for example the
-     transport_layer_properties.HOST constant's value is
-     "solace.messaging.transport.host"):
+  1. config.json in the working directory, when present. Its keys are Solace
+     Python API property names (the values of the solace_properties constants):
        "solace.messaging.transport.host"
        "solace.messaging.service.vpn-name"
        "solace.messaging.authentication.basic.username"
        "solace.messaging.authentication.basic.password"
-     EVERY key in the file is passed through to from_properties() unchanged, so
-     further service properties (for example
-     "solace.messaging.transport.keep-alive-interval") work with no parser
-     change. A builder call made after from_properties() overrides the same key:
-     the samples set the reconnection strategy that way, so the
-     reconnection-attempts and reconnection-attempts-wait-interval keys from the
-     file are replaced by each sample's constants. Pass-through limitations: the
-     API passes every value to the native session as a string, and the native
-     library rejects an invalid value at build() or connect(); an unknown key is
-     accepted and silently ignored by the API. config.json holds broker
-     credentials, so it MUST be gitignored and never committed.
+     Every key passes through to from_properties() unchanged, so other service
+     properties need no parser change. A later builder call overrides the same
+     key, so each sample's reconnection strategy replaces any reconnection keys
+     in the file. The native library rejects an invalid value at build() or
+     connect(); the API silently ignores an unknown key. config.json holds broker
+     credentials, so it MUST be gitignored.
   2. otherwise the command-line arguments:
      <host:port> <message-vpn> <client-username> [password]
 
-The password is optional in both sources. The API requires the basic-auth password
-key at build(), so an absent or blank password is passed as an empty string.
-
-The config.json reader is the standard-library json module, so the samples keep
-their single Solace dependency (solace-pubsubplus). config.json must hold a single
-flat JSON object.
+The password is optional. The API requires the basic-auth password key at build(),
+so an absent or blank password is sent as an empty string. config.json must be a
+single flat JSON object; the standard-library json module reads it.
 
 Grounding: the "load a JSON file, then from_properties()" idiom and the required
-host and vpn-name keys are on the Messaging Service page of the Python API
-developer guide:
+host and vpn-name keys:
   https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md
+
+Copied into a generated project as solace_connection_config.py (a module name
+needs underscores); every sample imports it with
+  from solace_connection_config import SolaceConnectionConfig
+
+Any generated adaptation of this sample MUST begin with the exact line:
+  AI-assisted code. Review before production use.
+(This reference sample itself carries no such header by design.)
 """
 
 import json
