@@ -60,8 +60,7 @@ public class DirectRequestor {
     private static final String API = "JCSMP";
     // POSITIVE blocking-request timeout in milliseconds: requestor.request(...) blocks up
     // to this long for the correlated reply before throwing JCSMPRequestTimeoutException.
-    // A positive timeout is the direct reliability knob (NOT a burst); 3000 ms matches the
-    // upstream DirectRequestorBlocking sample.
+    // A positive timeout is the direct reliability knob (NOT a burst).
     private static final int REQUEST_TIMEOUT_MS = 3000;
 
     private static JCSMPSession session;

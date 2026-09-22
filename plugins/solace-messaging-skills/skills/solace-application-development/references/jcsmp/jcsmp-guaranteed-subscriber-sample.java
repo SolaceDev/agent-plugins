@@ -153,8 +153,7 @@ public class GuaranteedSubscriber {
         final Queue queue = JCSMPFactory.onlyInstance().createQueue(QUEUE_NAME);
 
         // ELEVATION: provision the durable queue in-process and map the topic onto it
-        // at startup, so a fresh broker works out of the box (the upstream sample expects
-        // the queue to pre-exist and errors out otherwise).
+        // at startup, so a fresh broker works out of the box.
         // best practice: confirm the broker allows client-side endpoint management first
         if (!session.isCapable(CapabilityType.ENDPOINT_MANAGEMENT)) {
             System.err.println("This client/broker does not allow client-side endpoint management; "
