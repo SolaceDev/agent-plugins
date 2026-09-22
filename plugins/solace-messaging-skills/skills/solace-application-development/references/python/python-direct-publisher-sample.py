@@ -73,18 +73,12 @@ PAYLOAD_SIZE = 512
 # MILLISECONDS per the RetryStrategy API reference.
 RECONNECT_RETRIES = 20
 RECONNECT_RETRY_INTERVAL_MS = 3000
-# For HA or replication failover resilience, follow the C API Best Practices: the
-# reconnect duration "should be set to last for at least 300 seconds" for HA. Its example
-# lists 1 connect retry, 20 reconnect retries, a 3000 ms wait, and 5 connect retries per
-# host; the Python retry strategy sets only the reconnect count and the wait, so
-# parametrized_retry(100, 3000) is one way to reach 300 s here, and the per-host value is
-# the CONNECTION_RETRIES_PER_HOST transport property. Use -1 retries
-# (RetryStrategy.forever_retry()) so the API retries indefinitely during a replication
-# failover, and a comma-separated host list in the host property
-# (tcp://host-a:55555,tcp://host-b:55555; the HOST property reference documents the
-# comma-separated form) so the API fails over between brokers.
-# back pressure: the publisher buffers at most this many unsent messages before
-# publish() raises PublisherOverflowError (the documented reject strategy)
+# For HA failover resilience, use the C API Best Practices values
+# (https://docs.solace.com/API/API-Developer-Guide/C-API-Best-Practices.md):
+#   HA failover: with_connection_retry_strategy(RetryStrategy.parametrized_retry(1, 3000)),
+#     with_reconnection_retry_strategy(RetryStrategy.parametrized_retry(20, 3000)),
+#     properties[transport_layer_properties.CONNECTION_RETRIES_PER_HOST] = 5
+# back pressure: publish() raises PublisherOverflowError once this many messages wait unsent
 PUBLISH_BUFFER_CAPACITY = 1000
 # terminate(grace_period): how long to wait for buffered sends to leave before the
 # publisher stops (the API default is 600000 ms); terminate() raises
