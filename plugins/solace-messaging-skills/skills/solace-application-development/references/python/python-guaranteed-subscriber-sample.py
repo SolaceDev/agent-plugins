@@ -97,25 +97,27 @@ class GuaranteedSubscriber:
         self.receiver: Optional[PersistentMessageReceiver] = None
         self.connect_attempted = False
         self.shutdown = threading.Event()
+        self.exit_code = 0  # set to 1 on a failure exit (failed bind, service interruption, or receiver termination)
         self.msg_recv_counter = 0  # num messages received
         self.has_detected_redelivery = False  # detected any messages being redelivered?
 
-    def main(self, args: list[str]) -> None:
+    def main(self, args: list[str]) -> int:
         trace(f"{API} {APP_NAME} initializing...")
         try:
-            if not self.setup_solace(args):
-                return
             # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
-            # loop exits, and teardown_solace() in the finally below stops the receiver (letting
-            # the handler finish and ACK the message in hand) and disconnects. Python runs
-            # signal handlers on the main thread, so the handler only flags; the cleanup runs
-            # on the main thread's normal exit path.
+            # loop exits, and teardown_solace() in the finally below stops the receiver and
+            # disconnects. Python runs signal handlers on the main thread, so the handler only
+            # flags; the cleanup runs on the main thread's normal exit path. Registered before
+            # setup, so a SIGTERM during the blocking connect() still reaches teardown.
             signal.signal(signal.SIGINT, self.on_shutdown_signal)
             signal.signal(signal.SIGTERM, self.on_shutdown_signal)
+            if not self.setup_solace(args):
+                return 1  # the bind failed; the finally below still runs teardown
             self.await_messages()
         finally:
             self.teardown_solace()
             trace("Main thread quitting.")
+        return self.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
     def on_shutdown_signal(self, signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping consumer...")
@@ -203,9 +205,11 @@ class GuaranteedSubscriber:
         if self.receiver is not None and self.receiver.is_running():
             # gracefully stop delivery before exit: terminate(grace_period) stops the receiver
             # and gives the handler up to the grace period to drain (and ACK) the messages the
-            # API has already received. A message received but not yet ACKed stays on the queue
-            # and is redelivered. terminate() raises IncompleteMessageDeliveryError when messages
-            # remain after the grace period; catch it so the disconnect below still runs
+            # API has already received. The receiver turns TERMINATED once its buffer is empty,
+            # while the handler may still hold the last message, so that message's ack() can
+            # fail (the API logs a warning). A message received but not yet ACKed stays on the
+            # queue and is redelivered. terminate() raises IncompleteMessageDeliveryError when
+            # messages remain after the grace period; catch it so the disconnect below still runs
             try:
                 self.receiver.terminate(TERMINATE_GRACE_PERIOD_MS)
             except PubSubPlusClientError as error:
@@ -252,6 +256,7 @@ class ServiceEventHandler(ReconnectionAttemptListener, ReconnectionListener, Ser
         # Application cleanup signal: the service will not recover. Trigger application-side
         # cleanup from here. This sample sets shutdown, so the main loop exits and
         # teardown_solace() runs in main's finally.
+        self.app.exit_code = 1
         self.app.shutdown.set()
 
 
@@ -281,6 +286,7 @@ class ReceiverTerminationHandler(TerminationNotificationListener):
         # Application cleanup signal: decide here whether to recreate the receiver or shut
         # down. This sample shuts down: the main loop exits and teardown_solace() runs in
         # main's finally.
+        self.app.exit_code = 1
         self.app.shutdown.set()
 
 
@@ -328,4 +334,4 @@ class QueueMessageHandler(MessageHandler):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    GuaranteedSubscriber().main(sys.argv[1:])
+    sys.exit(GuaranteedSubscriber().main(sys.argv[1:]))

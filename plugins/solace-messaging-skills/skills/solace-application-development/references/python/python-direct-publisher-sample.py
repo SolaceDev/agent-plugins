@@ -99,23 +99,26 @@ class DirectPublisher:
         self.connect_attempted = False
         self.is_connected = True  # tracks transport state via the reconnection listeners
         self.shutdown = threading.Event()
+        self.exit_code = 0  # set to 1 on a failure exit (service interruption or a publish() failure)
         self.publisher_ready = threading.Event()  # set by the readiness listener when the buffer has room
         self.msg_sent_counter = 0  # num messages sent
 
-    def main(self, args: list[str]) -> None:
+    def main(self, args: list[str]) -> int:
         trace(f"{API} {APP_NAME} initializing...")
         try:
-            self.setup_solace(args)
             # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the publish
             # loop exits, and teardown_solace() in the finally below stops the publisher and
             # disconnects. Python runs signal handlers on the main thread, so the handler only
-            # flags; the cleanup runs on the main thread's normal exit path.
+            # flags; the cleanup runs on the main thread's normal exit path. Registered before
+            # setup, so a SIGTERM during the blocking connect() still reaches teardown.
             signal.signal(signal.SIGINT, self.on_shutdown_signal)
             signal.signal(signal.SIGTERM, self.on_shutdown_signal)
+            self.setup_solace(args)
             self.run_publish_loop()
         finally:
             self.teardown_solace()
             trace("Main thread quitting.")
+        return self.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
     def on_shutdown_signal(self, signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping publisher...")
@@ -202,6 +205,7 @@ class DirectPublisher:
             except PubSubPlusClientError as error:
                 # publish() raises when the message cannot be sent and retrying would not help
                 logger.warning("publish() failed, quitting: %s", error)
+                self.exit_code = 1
                 self.shutdown.set()  # let's quit; or, could initiate a new connection attempt
                 break
             # delay between messages; the wait returns early once shutdown is requested
@@ -274,6 +278,7 @@ class ServiceEventHandler(ReconnectionAttemptListener, ReconnectionListener, Ser
         # Application cleanup signal: the service will not recover. Trigger application-side
         # cleanup from here. This sample sets shutdown, so the publish loop exits and
         # teardown_solace() runs in main's finally.
+        self.app.exit_code = 1
         self.app.shutdown.set()
 
 
@@ -302,4 +307,4 @@ class PublishFailureHandler(PublishFailureListener):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    DirectPublisher().main(sys.argv[1:])
+    sys.exit(DirectPublisher().main(sys.argv[1:]))
