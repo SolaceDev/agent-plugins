@@ -47,10 +47,6 @@ developer guide:
   https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md
 """
 
-# PEP 563: keep annotations unevaluated so the built-in generics below (list[str],
-# dict[str, object]) also import on Python 3.7 and 3.8
-from __future__ import annotations
-
 import json
 import os
 import sys

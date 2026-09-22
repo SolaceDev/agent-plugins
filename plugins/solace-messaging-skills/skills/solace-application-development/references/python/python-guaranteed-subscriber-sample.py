@@ -35,10 +35,6 @@ Any generated adaptation of this sample MUST begin with the exact line:
 (This reference sample itself carries no such header by design.)
 """
 
-# PEP 563: keep annotations unevaluated so the built-in generics below (list[str],
-# dict[str, object]) also import on Python 3.7 and 3.8
-from __future__ import annotations
-
 import logging
 import signal
 import sys
