@@ -1,2 +1,5 @@
 # GSD planning directory (local-only)
 .planning/
+
+# Python bytecode cache
+__pycache__/
