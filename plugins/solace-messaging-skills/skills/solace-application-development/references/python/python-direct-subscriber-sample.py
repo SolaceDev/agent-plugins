@@ -71,8 +71,12 @@ RECONNECT_RETRY_INTERVAL_MS = 3000
 #     with_reconnection_retry_strategy(RetryStrategy.parametrized_retry(20, 3000)),
 #     properties[transport_layer_properties.CONNECTION_RETRIES_PER_HOST] = 5
 # terminate(grace_period): how long to wait for the handler to drain the messages the API
-# has already received before the receiver stops (the API default is 600000 ms);
-# terminate() raises IncompleteMessageDeliveryError when messages remain after that
+# has already received before the receiver stops; terminate() raises
+# IncompleteMessageDeliveryError when messages remain after that. A bounded grace period
+# keeps shutdown time predictable, for example within the stop timeout of a process
+# supervisor, so the disconnect still runs. The API default is 600000 ms (10 minutes).
+# Adjust the value to suit the application: longer lets the handler finish more of the
+# received messages, shorter exits sooner.
 TERMINATE_GRACE_PERIOD_MS = 10_000
 
 # API events go through standard logging; the trace() narration below is a separate channel

@@ -81,8 +81,11 @@ RECONNECT_RETRY_INTERVAL_MS = 3000
 # back pressure: publish() raises PublisherOverflowError once this many messages wait unsent
 PUBLISH_BUFFER_CAPACITY = 1000
 # terminate(grace_period): how long to wait for buffered sends to leave before the
-# publisher stops (the API default is 600000 ms); terminate() raises
-# IncompleteMessageDeliveryError when messages are still buffered after that
+# publisher stops; terminate() raises IncompleteMessageDeliveryError when messages are
+# still buffered after that. A bounded grace period keeps shutdown time predictable, for
+# example within the stop timeout of a process supervisor, so the disconnect still runs.
+# The API default is 600000 ms (10 minutes). Adjust the value to suit the application:
+# longer gives buffered sends more time to leave, shorter exits sooner.
 TERMINATE_GRACE_PERIOD_MS = 10_000
 
 # API events go through standard logging; the trace() narration below is a separate channel
