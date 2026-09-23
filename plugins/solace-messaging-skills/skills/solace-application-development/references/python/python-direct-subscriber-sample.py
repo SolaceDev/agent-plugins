@@ -41,7 +41,7 @@ import threading
 from typing import Optional
 
 from solace.messaging.config.retry_strategy import RetryStrategy
-from solace.messaging.errors.pubsubplus_client_error import PubSubPlusClientError
+from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PubSubPlusClientError
 from solace.messaging.messaging_service import (
     MessagingService,
     ReconnectionAttemptListener,
@@ -92,7 +92,7 @@ class DirectSubscriber:
         self.receiver: Optional[DirectMessageReceiver] = None
         self.connect_attempted = False
         self.shutdown = threading.Event()
-        self.exit_code = 0  # set to 1 on a failure exit (service interruption)
+        self.exit_code = 0  # set to 1 on a failure exit (service interruption or a failed terminate())
         self.msg_recv_counter = 0  # num messages received
         self.has_detected_discard = False  # any discards seen?
 
@@ -180,9 +180,13 @@ class DirectSubscriber:
             # when messages remain after that; catch it so the disconnect below still runs
             try:
                 self.receiver.terminate(TERMINATE_GRACE_PERIOD_MS)
-            except PubSubPlusClientError as error:
+            except IncompleteMessageDeliveryError as error:
                 logger.error("Receiver stopped with messages still undelivered to the handler after %d ms: %s",
                              TERMINATE_GRACE_PERIOD_MS, error)
+                self.exit_code = 1
+            except PubSubPlusClientError as error:
+                logger.error("Receiver terminate() failed: %s", error)
+                self.exit_code = 1
         if self.connect_attempted:
             # disconnect() raises IllegalStateError on a service that never attempted to connect,
             # hence the flag; on a service that is already down it returns quietly

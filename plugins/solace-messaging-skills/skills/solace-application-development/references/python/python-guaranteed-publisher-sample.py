@@ -42,7 +42,7 @@ import uuid
 from typing import Optional
 
 from solace.messaging.config.retry_strategy import RetryStrategy
-from solace.messaging.errors.pubsubplus_client_error import PublisherOverflowError, PubSubPlusClientError
+from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PublisherOverflowError, PubSubPlusClientError
 from solace.messaging.messaging_service import (
     MessagingService,
     ReconnectionAttemptListener,
@@ -101,7 +101,7 @@ class GuaranteedPublisher:
         self.connect_attempted = False
         self.is_connected = True  # tracks transport state via the reconnection listeners
         self.shutdown = threading.Event()
-        self.exit_code = 0  # set to 1 on a failure exit (service interruption or a publish() failure)
+        self.exit_code = 0  # set to 1 on a failure exit (service interruption, a publish() failure, or a failed terminate())
         self.publisher_ready = threading.Event()  # set by the readiness listener when the buffer has room
         self.msg_sent_counter = 0  # num messages sent
 
@@ -246,9 +246,13 @@ class GuaranteedPublisher:
             # outstanding after the grace period; catch it so the disconnect below still runs
             try:
                 self.publisher.terminate(TERMINATE_GRACE_PERIOD_MS)
-            except PubSubPlusClientError as error:
+            except IncompleteMessageDeliveryError as error:
                 logger.error("Publisher stopped with sends or receipts still outstanding after %d ms: %s",
                              TERMINATE_GRACE_PERIOD_MS, error)
+                self.exit_code = 1
+            except PubSubPlusClientError as error:
+                logger.error("Publisher terminate() failed: %s", error)
+                self.exit_code = 1
         if self.connect_attempted:
             # disconnect() raises IllegalStateError on a service that never attempted to connect,
             # hence the flag; on a service that is already down it returns quietly
@@ -316,8 +320,8 @@ class PublishReceiptHandler(MessagePublishReceiptListener):
         if publish_receipt.exception is None:  # ACK
             logger.debug("ACK for Message ID %s", msg_id)  # good enough, the broker has it now
             return
-        # NACK: the exception says why (for example MessageRejectedByBrokerError when no queue
-        # subscribes to the topic and the client-profile rejects on no subscription match)
+        # NACK: the exception says why (for example MessageDestinationDoesNotExistError when no
+        # queue subscribes to the topic and the client-profile rejects on no subscription match)
         logger.warning("NACK for Message ID %s - %s", msg_id, publish_receipt.exception)
         # probably want to do something here. some error handling possibilities:
         #  - look the message up by this ID in your application's outbound store and send it again

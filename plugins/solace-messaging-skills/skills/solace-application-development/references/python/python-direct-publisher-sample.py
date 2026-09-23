@@ -44,7 +44,7 @@ import uuid
 from typing import Optional
 
 from solace.messaging.config.retry_strategy import RetryStrategy
-from solace.messaging.errors.pubsubplus_client_error import PublisherOverflowError, PubSubPlusClientError
+from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PublisherOverflowError, PubSubPlusClientError
 from solace.messaging.messaging_service import (
     MessagingService,
     ReconnectionAttemptListener,
@@ -102,7 +102,7 @@ class DirectPublisher:
         self.connect_attempted = False
         self.is_connected = True  # tracks transport state via the reconnection listeners
         self.shutdown = threading.Event()
-        self.exit_code = 0  # set to 1 on a failure exit (service interruption or a publish() failure)
+        self.exit_code = 0  # set to 1 on a failure exit (service interruption, a publish() failure, or a failed terminate())
         self.publisher_ready = threading.Event()  # set by the readiness listener when the buffer has room
         self.msg_sent_counter = 0  # num messages sent
 
@@ -162,8 +162,8 @@ class DirectPublisher:
             .build()
         )
         # direct messaging has no broker receipt, so failures the API detects after publish()
-        # returned (a buffered message that could not be sent, a broker rejection) arrive
-        # asynchronously through this listener; without it they are silent
+        # returned (a buffered message that could not be sent) arrive asynchronously through
+        # this listener; without it they are silent
         self.publisher.set_publish_failure_listener(PublishFailureHandler())
         # documented pairing with on_back_pressure_reject: ready() fires when the buffer has
         # room again, so the loop waits on the event instead of spinning on overflow
@@ -234,9 +234,13 @@ class DirectPublisher:
             # that; catch it so the disconnect below still runs
             try:
                 self.publisher.terminate(TERMINATE_GRACE_PERIOD_MS)
-            except PubSubPlusClientError as error:
+            except IncompleteMessageDeliveryError as error:
                 logger.error("Publisher stopped with messages still buffered after %d ms: %s",
                              TERMINATE_GRACE_PERIOD_MS, error)
+                self.exit_code = 1
+            except PubSubPlusClientError as error:
+                logger.error("Publisher terminate() failed: %s", error)
+                self.exit_code = 1
         if self.connect_attempted:
             # disconnect() raises IllegalStateError on a service that never attempted to connect,
             # hence the flag; on a service that is already down it returns quietly

@@ -16,7 +16,7 @@ Each prompt runs three times and the verdict is the majority result. Set `TRIGGE
 
 ## Continuous integration
 
-In GitHub Actions, the `trigger-evals` job in `.github/workflows/ci.yml` runs this same script on every pull request as a two model matrix (`claude-haiku-4-5` and `claude-sonnet-5`), each model an independent check, and self-skips green when the `ANTHROPIC_API_KEY` secret is absent.
+The `trigger-evals` job in `.github/workflows/ci.yml` is disabled (`if: false`), because no policy permits an API key on this public repository. Run the trigger evals locally as shown above. To re-enable the job once a key is allowed, remove the `if`. It then runs this same script on every pull request as a two model matrix (`claude-haiku-4-5` and `claude-sonnet-5`), each model an independent check, and self-skips green when the `ANTHROPIC_API_KEY` secret is absent.
 
 # Output evals
 
