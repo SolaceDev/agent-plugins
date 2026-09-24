@@ -22,8 +22,9 @@ queue plus a topic subscription so a fresh broker works out of the box, a
 CLIENT-ack receiver that ACKs only after processing, receiver active/passive state
 and termination handling, reconnection and service interruption listeners
 registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown. Structured as
-setup_solace(...), await_messages(), and teardown_solace(), with teardown run
-from main's finally on every exit path.
+module-level functions, setup_solace(...), await_messages(...), and
+teardown_solace(...), that share one SubscriberState; main() runs teardown from its
+finally on every exit path.
 
 Only practices documented in canonical Solace sources are encoded here.
 
@@ -39,7 +40,7 @@ import logging
 import signal
 import sys
 import threading
-from typing import Optional
+from dataclasses import dataclass, field
 
 from solace.messaging.config.missing_resources_creation_configuration import MissingResourcesCreationStrategy
 from solace.messaging.config.receiver_activation_passivation_configuration import (
@@ -62,7 +63,7 @@ from solace.messaging.resources.queue import Queue
 from solace.messaging.resources.topic_subscription import TopicSubscription
 from solace.messaging.utils.life_cycle_control import TerminationEvent, TerminationNotificationListener
 
-from solace_connection_config import SolaceConnectionConfig
+from solace_connection_config import load_service_properties
 
 APP_NAME = "GuaranteedSubscriber"
 QUEUE_NAME = "q_python_sub"
@@ -92,141 +93,147 @@ TERMINATE_GRACE_PERIOD_MS = 10_000
 logger = logging.getLogger(APP_NAME)
 
 
-class GuaranteedSubscriber:
-    """The app: the service, the receiver, the flags the listeners flip, and the counters.
-    Use this type of app for receiving Guaranteed messages (e.g. via a queue endpoint)."""
+@dataclass
+class SubscriberState:
+    """What the main loop, the signal handler, and the API listener threads share: the
+    service, the receiver, the flags the listeners flip, and the counters. Use this type of
+    app for receiving Guaranteed messages (e.g. via a queue endpoint)."""
+    messaging_service: MessagingService | None = None
+    receiver: PersistentMessageReceiver | None = None
+    connect_attempted: bool = False
+    shutdown: threading.Event = field(default_factory=threading.Event)
+    exit_code: int = 0  # set to 1 on a failure exit (service interruption, receiver termination, or a failed terminate())
+    msg_recv_counter: int = 0  # num messages received
+    has_detected_redelivery: bool = False  # detected any messages being redelivered?
 
-    def __init__(self) -> None:
-        self.messaging_service: Optional[MessagingService] = None
-        self.receiver: Optional[PersistentMessageReceiver] = None
-        self.connect_attempted = False
-        self.shutdown = threading.Event()
-        self.exit_code = 0  # set to 1 on a failure exit (service interruption, receiver termination, or a failed terminate())
-        self.msg_recv_counter = 0  # num messages received
-        self.has_detected_redelivery = False  # detected any messages being redelivered?
 
-    def main(self, args: list[str]) -> int:
-        trace(f"{API} {APP_NAME} initializing...")
-        try:
-            # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
-            # loop exits, and teardown_solace() in the finally below stops the receiver and
-            # disconnects. Python runs signal handlers on the main thread, so the handler only
-            # flags; the cleanup runs on the main thread's normal exit path. Registered before
-            # setup, so a SIGTERM during the blocking connect() still reaches teardown.
-            signal.signal(signal.SIGINT, self.on_shutdown_signal)
-            signal.signal(signal.SIGTERM, self.on_shutdown_signal)
-            if not self.setup_solace(args):
-                return 1  # the bind failed; the finally below still runs teardown
-            self.await_messages()
-        finally:
-            self.teardown_solace()
-            trace("Main thread quitting.")
-        return self.exit_code  # non-zero after a failure, so scripts and supervisors see it
+def main(args: list[str]) -> int:
+    trace(f"{API} {APP_NAME} initializing...")
+    state = SubscriberState()
 
-    def on_shutdown_signal(self, signum: int, _frame) -> None:
+    def on_shutdown_signal(signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping consumer...")
-        self.shutdown.set()
+        state.shutdown.set()
 
-    def setup_solace(self, args: list[str]) -> bool:
-        # basic username/password connection details, built by the shared SolaceConnectionConfig
-        # helper: read from a config.json in the working directory if present, else from the
-        # command line (<host:port> <message-vpn> <client-username> [password])
-        properties = SolaceConnectionConfig.load(args, APP_NAME).to_service_properties()
-        # build() creates the native session and resolves the host, so an unresolvable host
-        # fails here, before connect()
-        self.messaging_service = (
-            MessagingService.builder()
-            .from_properties(properties)
-            .with_reconnection_retry_strategy(
-                RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
-            .build()
-        )
-        # best practice: register the service event listeners BEFORE connect(), so no
-        # reconnection or interruption event raised during or right after the connect is lost,
-        # and handle each event appropriately rather than only logging it
-        service_events = ServiceEventHandler(self)
-        self.messaging_service.add_reconnection_attempt_listener(service_events)
-        self.messaging_service.add_reconnection_listener(service_events)
-        self.messaging_service.add_service_interruption_listener(service_events)
-        self.connect_attempted = True
-        self.messaging_service.connect()  # blocking connect
+    try:
+        # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
+        # loop exits, and teardown_solace() in the finally below stops the receiver and
+        # disconnects. Python runs signal handlers on the main thread, so the handler only
+        # flags; the cleanup runs on the main thread's normal exit path. Registered before
+        # setup, so a SIGTERM during the blocking connect() still reaches teardown.
+        signal.signal(signal.SIGINT, on_shutdown_signal)
+        signal.signal(signal.SIGTERM, on_shutdown_signal)
+        if not setup_solace(state, args):
+            return 1  # the bind failed; the finally below still runs teardown
+        await_messages(state)
+    finally:
+        teardown_solace(state)
+        trace("Main thread quitting.")
+    return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
-        # configure the queue API object locally: durable, exclusive (single-consumer sample)
-        queue = Queue.durable_exclusive_queue(QUEUE_NAME)
 
-        # ELEVATION: provision the durable queue in-process and map the topic onto it at
-        # start, so a fresh broker works out of the box. CREATE_ON_START creates the queue
-        # passed to build() when start() runs, as long as the client has permission; the
-        # default, DO_NOT_CREATE, disables provisioning so an administrator provisions the
-        # queue instead. with_subscriptions() on a durable queue adds the topic subscription
-        # to the queue at start (pub/sub onto a queue). A re-run reuses the existing queue
-        # and subscription.
-        receiver_builder = (
-            self.messaging_service.create_persistent_message_receiver_builder()
-            .with_missing_resources_creation_strategy(MissingResourcesCreationStrategy.CREATE_ON_START)
-            .with_subscriptions([TopicSubscription.of(TOPIC_NAME)])
-            # best practice: client acknowledgement (also the API default), so a message leaves
-            # the queue only after the handler has processed it and called ack()
-            .with_message_client_acknowledgement()
-            # request active/passive state changes: on an exclusive queue only one bound receiver
-            # is ACTIVE; any other is PASSIVE (bound, not receiving) until the active one goes away
-            .with_activation_passivation_support(ReceiverStateHandler())
-        )
-        trace(f"Attempting to bind to queue '{QUEUE_NAME}' on the broker.")
-        self.receiver = receiver_builder.build(queue)
-        # a broker-initiated termination (for example the queue was deleted or shut down)
-        # surfaces here; the handler ends the main loop (see ReceiverTerminationHandler below)
-        self.receiver.set_termination_notification_listener(ReceiverTerminationHandler(self))
+def setup_solace(state: SubscriberState, args: list[str]) -> bool:
+    # basic username/password connection details, built by the shared connection-config
+    # helper: read from a config.json in the working directory if present, else from the
+    # command line (<host:port> <message-vpn> <client-username> [password])
+    properties = load_service_properties(args, APP_NAME)
+    # build() creates the native session and resolves the host, so an unresolvable host
+    # fails here, before connect()
+    state.messaging_service = (
+        MessagingService.builder()
+        .from_properties(properties)
+        .with_reconnection_retry_strategy(
+            RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
+        .build()
+    )
+    # best practice: register the service event listeners BEFORE connect(), so no
+    # reconnection or interruption event raised during or right after the connect is lost,
+    # and handle each event appropriately rather than only logging it
+    service_events = ServiceEventHandler(state)
+    state.messaging_service.add_reconnection_attempt_listener(service_events)
+    state.messaging_service.add_reconnection_listener(service_events)
+    state.messaging_service.add_service_interruption_listener(service_events)
+    state.connect_attempted = True
+    state.messaging_service.connect()  # blocking connect
+
+    # configure the queue API object locally: durable, exclusive (single-consumer sample)
+    queue = Queue.durable_exclusive_queue(QUEUE_NAME)
+
+    # ELEVATION: provision the durable queue in-process and map the topic onto it at
+    # start, so a fresh broker works out of the box. CREATE_ON_START creates the queue
+    # passed to build() when start() runs, as long as the client has permission; the
+    # default, DO_NOT_CREATE, disables provisioning so an administrator provisions the
+    # queue instead. with_subscriptions() on a durable queue adds the topic subscription
+    # to the queue at start (pub/sub onto a queue). A re-run reuses the existing queue
+    # and subscription.
+    receiver_builder = (
+        state.messaging_service.create_persistent_message_receiver_builder()
+        .with_missing_resources_creation_strategy(MissingResourcesCreationStrategy.CREATE_ON_START)
+        .with_subscriptions([TopicSubscription.of(TOPIC_NAME)])
+        # best practice: client acknowledgement (also the API default), so a message leaves
+        # the queue only after the handler has processed it and called ack()
+        .with_message_client_acknowledgement()
+        # request active/passive state changes: on an exclusive queue only one bound receiver
+        # is ACTIVE; any other is PASSIVE (bound, not receiving) until the active one goes away
+        .with_activation_passivation_support(ReceiverStateHandler())
+    )
+    trace(f"Attempting to bind to queue '{QUEUE_NAME}' on the broker.")
+    state.receiver = receiver_builder.build(queue)
+    # a broker-initiated termination (for example the queue was deleted or shut down)
+    # surfaces here; the handler ends the main loop (see ReceiverTerminationHandler below)
+    state.receiver.set_termination_notification_listener(ReceiverTerminationHandler(state))
+    try:
+        # start() provisions the queue plus its subscription (CREATE_ON_START) and binds
+        # to the queue; the broker then starts sending messages on this receiver
+        state.receiver.start()
+    except PubSubPlusClientError as error:
+        logger.error("Could not bind to queue '%s': %s. If this client may not create endpoints, "
+                     "provision the queue and its topic subscription out-of-band or grant the "
+                     "capability. Exiting.", QUEUE_NAME, error)
+        return False  # teardown_solace() in main's finally disconnects
+    # see bottom of file for QueueMessageHandler, which receives the messages from the queue
+    state.receiver.receive_async(QueueMessageHandler(state, state.receiver))
+    return True
+
+
+def await_messages(state: SubscriberState) -> None:
+    # async queue receive working now, so time to wait until done...
+    trace(f"{APP_NAME} connected, and running. Press Ctrl-C to quit.")
+    while not state.shutdown.wait(1.0):  # wait 1 second; the wait returns True once shutdown is requested
+        trace(f"{API} {APP_NAME} Received msgs/s: {state.msg_recv_counter:,}")  # simple way of calculating message rates
+        state.msg_recv_counter = 0
+        if state.has_detected_redelivery:  # try shutting -> enabling the queue on the broker to see this
+            trace("*** Redelivery detected ***")
+            state.has_detected_redelivery = False  # only show the error once per second
+
+
+def teardown_solace(state: SubscriberState) -> None:
+    # Application cleanup belongs here: teardown_solace() runs in main's finally on
+    # EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, receiver
+    # termination, or an exception), so Solace teardown and application-side cleanup
+    # are never skipped.
+    state.shutdown.set()
+    if state.receiver is not None and state.receiver.is_running():
+        # gracefully stop delivery before exit: terminate(grace_period) stops the receiver
+        # and gives the handler up to the grace period to drain (and ACK) the messages the
+        # API has already received. The receiver turns TERMINATED once its buffer is empty,
+        # while the handler may still hold the last message, so that message's ack() can
+        # fail (the API logs a warning). A message received but not yet ACKed stays on the
+        # queue and is redelivered. terminate() raises IncompleteMessageDeliveryError when
+        # messages remain after the grace period; catch it so the disconnect below still runs
         try:
-            # start() provisions the queue plus its subscription (CREATE_ON_START) and binds
-            # to the queue; the broker then starts sending messages on this receiver
-            self.receiver.start()
+            state.receiver.terminate(TERMINATE_GRACE_PERIOD_MS)
+        except IncompleteMessageDeliveryError as error:
+            logger.error("Receiver stopped with messages still undelivered to the handler after %d ms: %s",
+                         TERMINATE_GRACE_PERIOD_MS, error)
+            state.exit_code = 1
         except PubSubPlusClientError as error:
-            logger.error("Could not bind to queue '%s': %s. If this client may not create endpoints, "
-                         "provision the queue and its topic subscription out-of-band or grant the "
-                         "capability. Exiting.", QUEUE_NAME, error)
-            return False  # teardown_solace() in main's finally disconnects
-        # see bottom of file for QueueMessageHandler, which receives the messages from the queue
-        self.receiver.receive_async(QueueMessageHandler(self, self.receiver))
-        return True
-
-    def await_messages(self) -> None:
-        # async queue receive working now, so time to wait until done...
-        trace(f"{APP_NAME} connected, and running. Press Ctrl-C to quit.")
-        while not self.shutdown.wait(1.0):  # wait 1 second; the wait returns True once shutdown is requested
-            trace(f"{API} {APP_NAME} Received msgs/s: {self.msg_recv_counter:,}")  # simple way of calculating message rates
-            self.msg_recv_counter = 0
-            if self.has_detected_redelivery:  # try shutting -> enabling the queue on the broker to see this
-                trace("*** Redelivery detected ***")
-                self.has_detected_redelivery = False  # only show the error once per second
-
-    def teardown_solace(self) -> None:
-        # Application cleanup belongs here: teardown_solace() runs in main's finally on
-        # EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, receiver
-        # termination, or an exception), so Solace teardown and application-side cleanup
-        # are never skipped.
-        self.shutdown.set()
-        if self.receiver is not None and self.receiver.is_running():
-            # gracefully stop delivery before exit: terminate(grace_period) stops the receiver
-            # and gives the handler up to the grace period to drain (and ACK) the messages the
-            # API has already received. The receiver turns TERMINATED once its buffer is empty,
-            # while the handler may still hold the last message, so that message's ack() can
-            # fail (the API logs a warning). A message received but not yet ACKed stays on the
-            # queue and is redelivered. terminate() raises IncompleteMessageDeliveryError when
-            # messages remain after the grace period; catch it so the disconnect below still runs
-            try:
-                self.receiver.terminate(TERMINATE_GRACE_PERIOD_MS)
-            except IncompleteMessageDeliveryError as error:
-                logger.error("Receiver stopped with messages still undelivered to the handler after %d ms: %s",
-                             TERMINATE_GRACE_PERIOD_MS, error)
-                self.exit_code = 1
-            except PubSubPlusClientError as error:
-                logger.error("Receiver terminate() failed: %s", error)
-                self.exit_code = 1
-        if self.connect_attempted:
-            # disconnect() raises IllegalStateError on a service that never attempted to connect,
-            # hence the flag; on a service that is already down it returns quietly
-            self.messaging_service.disconnect()  # will also release the receiver
+            logger.error("Receiver terminate() failed: %s", error)
+            state.exit_code = 1
+    if state.connect_attempted:
+        # disconnect() raises IllegalStateError on a service that never attempted to connect,
+        # hence the flag; on a service that is already down it returns quietly
+        state.messaging_service.disconnect()  # will also release the receiver
 
 
 def trace(message: str) -> None:
@@ -245,8 +252,8 @@ class ServiceEventHandler(ReconnectionAttemptListener, ReconnectionListener, Ser
     return promptly and do not block in them, since events and delivery stall while a
     callback runs (C API Best Practices)."""
 
-    def __init__(self, app: GuaranteedSubscriber) -> None:
-        self.app = app
+    def __init__(self, state: SubscriberState) -> None:
+        self.state = state
 
     def on_reconnecting(self, event: ServiceEvent) -> None:
         # connection lost, automatic reconnect attempt in progress
@@ -264,8 +271,8 @@ class ServiceEventHandler(ReconnectionAttemptListener, ReconnectionListener, Ser
         # Application cleanup signal: the service will not recover. Trigger application-side
         # cleanup from here. This sample sets shutdown, so the main loop exits and
         # teardown_solace() runs in main's finally.
-        self.app.exit_code = 1
-        self.app.shutdown.set()
+        self.state.exit_code = 1
+        self.state.shutdown.set()
 
 
 class ReceiverStateHandler(ReceiverStateChangeListener):
@@ -284,8 +291,8 @@ class ReceiverTerminationHandler(TerminationNotificationListener):
     """Handles a broker-initiated termination of the receiver. Runs on an API thread:
     return promptly and do not block in it (C API Best Practices)."""
 
-    def __init__(self, app: GuaranteedSubscriber) -> None:
-        self.app = app
+    def __init__(self, state: SubscriberState) -> None:
+        self.state = state
 
     def on_termination(self, event: TerminationEvent) -> None:
         # the receiver was terminated by the broker: delivery from the queue has stopped
@@ -294,8 +301,8 @@ class ReceiverTerminationHandler(TerminationNotificationListener):
         # Application cleanup signal: decide here whether to recreate the receiver or shut
         # down. This sample shuts down: the main loop exits and teardown_solace() runs in
         # main's finally.
-        self.app.exit_code = 1
-        self.app.shutdown.set()
+        self.state.exit_code = 1
+        self.state.shutdown.set()
 
 
 class QueueMessageHandler(MessageHandler):
@@ -304,12 +311,12 @@ class QueueMessageHandler(MessageHandler):
     (hand heavy work to the application's own thread or queue), since delivery from the queue
     stalls while it runs (C API Best Practices)."""
 
-    def __init__(self, app: GuaranteedSubscriber, receiver: PersistentMessageReceiver) -> None:
-        self.app = app
+    def __init__(self, state: SubscriberState, receiver: PersistentMessageReceiver) -> None:
+        self.state = state
         self.receiver = receiver
 
     def on_message(self, message: InboundMessage) -> None:
-        self.app.msg_recv_counter += 1
+        self.state.msg_recv_counter += 1
         try:
             # the publisher sample sends a bytearray payload (the binary attachment), read back with
             # get_payload_as_bytes(); a str payload arrives via get_payload_as_string() instead.
@@ -322,7 +329,7 @@ class QueueMessageHandler(MessageHandler):
                 # this is the broker telling the consumer that this message has been sent and not ACKed before.
                 # this can happen if an exception is thrown, or the broker restarts, or the network disconnects
                 # perhaps an error in processing? Should do extra checks to avoid duplicate processing
-                self.app.has_detected_redelivery = True
+                self.state.has_detected_redelivery = True
         except Exception:
             # best practice: handle an unexpected message format without crashing, log it, and
             # still ACK below (C API Best Practices). Without this, the API swallows the exception
@@ -342,4 +349,4 @@ class QueueMessageHandler(MessageHandler):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    sys.exit(GuaranteedSubscriber().main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:]))
