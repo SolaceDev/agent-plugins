@@ -126,9 +126,15 @@ def main(args: list[str]) -> int:
     # connect, so a SIGTERM during the blocking connect() still reaches teardown.
     signal.signal(signal.SIGINT, on_shutdown_signal)
     signal.signal(signal.SIGTERM, on_shutdown_signal)
+    # basic username/password connection details, built by the shared connection-config
+    # helper: read from a config.json in the working directory if present, else from the
+    # command line (<host:port> <message-vpn> <client-username> [password]). Turning the
+    # application's input into Solace properties is the application's job, so it stays out
+    # of setup_solace(), which works from the properties alone.
+    properties = load_service_properties(args, APP_NAME)
     # setup_solace() raises before any connection exists, so there is nothing to tear down
     # if it fails
-    state = setup_solace(args, shutdown)
+    state = setup_solace(properties, shutdown)
     try:
         connect_solace(state)
         run_publish_loop(state)
@@ -138,18 +144,17 @@ def main(args: list[str]) -> int:
     return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
 
-def setup_solace(args: list[str], shutdown: threading.Event) -> PublisherState:
-    # basic username/password connection details, built by the shared connection-config
-    # helper: read from a config.json in the working directory if present, else from the
-    # command line (<host:port> <message-vpn> <client-username> [password])
-    properties = load_service_properties(args, APP_NAME)
+def setup_solace(properties: dict, shutdown: threading.Event) -> PublisherState:
     # build() creates the native session and resolves the host, so an unresolvable host
     # fails here, before connect()
     messaging_service = (
         MessagingService.builder()
-        .from_properties(properties)
+        # the builder merges each call in order and a later call wins, so the reconnection
+        # strategy comes first: it is the default, and reconnection keys in the properties
+        # (for example from config.json) override it
         .with_reconnection_retry_strategy(
             RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
+        .from_properties(properties)
         .build()
     )
     # DIRECT publisher with capacity-bounded back pressure: publish() blocks once
@@ -245,13 +250,15 @@ def teardown_solace(state: PublisherState) -> None:
         # direct is at-most-once: there are no broker receipts to drain, so terminate() only
         # gives the messages still in the publisher's buffer up to the grace period to leave.
         # It raises IncompleteMessageDeliveryError when messages are still buffered after
-        # that; catch it so the disconnect below still runs
+        # that; catch it so the disconnect below still runs. Those messages are lost, which
+        # direct (at-most-once) messaging allows, so this is a warning and the exit code stays
+        # 0. An application that must not lose messages at shutdown can raise the level (or
+        # use guaranteed messaging).
         try:
             state.publisher.terminate(TERMINATE_GRACE_PERIOD_MS)
         except IncompleteMessageDeliveryError as error:
-            logger.error("Publisher stopped with messages still buffered after %d ms: %s",
-                         TERMINATE_GRACE_PERIOD_MS, error)
-            state.exit_code = 1
+            logger.warning("Publisher stopped with messages still buffered after %d ms: %s",
+                           TERMINATE_GRACE_PERIOD_MS, error)
         except PubSubPlusClientError as error:
             logger.error("Publisher terminate() failed: %s", error)
             state.exit_code = 1

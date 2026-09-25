@@ -124,9 +124,15 @@ def main(args: list[str]) -> int:
     # connect, so a SIGTERM during the blocking connect() still reaches teardown.
     signal.signal(signal.SIGINT, on_shutdown_signal)
     signal.signal(signal.SIGTERM, on_shutdown_signal)
+    # basic username/password connection details, built by the shared connection-config
+    # helper: read from a config.json in the working directory if present, else from the
+    # command line (<host:port> <message-vpn> <client-username> [password]). Turning the
+    # application's input into Solace properties is the application's job, so it stays out
+    # of setup_solace(), which works from the properties alone.
+    properties = load_service_properties(args, APP_NAME)
     # setup_solace() raises before any connection exists, so there is nothing to tear down
     # if it fails
-    state = setup_solace(args, shutdown)
+    state = setup_solace(properties, shutdown)
     try:
         connect_solace(state)
         await_messages(state)
@@ -136,18 +142,17 @@ def main(args: list[str]) -> int:
     return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
 
-def setup_solace(args: list[str], shutdown: threading.Event) -> SubscriberState:
-    # basic username/password connection details, built by the shared connection-config
-    # helper: read from a config.json in the working directory if present, else from the
-    # command line (<host:port> <message-vpn> <client-username> [password])
-    properties = load_service_properties(args, APP_NAME)
+def setup_solace(properties: dict, shutdown: threading.Event) -> SubscriberState:
     # build() creates the native session and resolves the host, so an unresolvable host
     # fails here, before connect()
     messaging_service = (
         MessagingService.builder()
-        .from_properties(properties)
+        # the builder merges each call in order and a later call wins, so the reconnection
+        # strategy comes first: it is the default, and reconnection keys in the properties
+        # (for example from config.json) override it
         .with_reconnection_retry_strategy(
             RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
+        .from_properties(properties)
         .build()
     )
     # DIRECT receiver: a topic subscription on the receiver (no queue, no provisioning).

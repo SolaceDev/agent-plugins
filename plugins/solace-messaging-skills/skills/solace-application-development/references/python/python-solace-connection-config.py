@@ -11,8 +11,8 @@ MessagingService.builder().from_properties(...) takes. Source precedence:
        "solace.messaging.authentication.basic.password"
      Every key passes through to from_properties() unchanged, so other service
      properties need no parser change. A later builder call overrides the same
-     key, so each sample's reconnection strategy replaces any reconnection keys
-     in the file. The native library rejects an invalid value at build() or
+     key, and each sample sets its reconnection strategy before from_properties(),
+     so reconnection keys in the file override the sample's default. The native library rejects an invalid value at build() or
      connect(); the API silently ignores an unknown key. config.json holds broker
      credentials, so it MUST be gitignored.
   2. otherwise the command-line arguments:
