@@ -57,7 +57,6 @@ public class DirectPublisher {
     private static final String APP_NAME = DirectPublisher.class.getSimpleName();
     static final String TOPIC_PREFIX = "solace/samples/";  // used as the topic "root"
     private static final String API = "JCSMP";
-    private static final int APPROX_MSG_RATE_PER_SEC = 100;
     private static final int PAYLOAD_SIZE = 512;
 
     // remember to add log4j2.xml to your classpath
@@ -189,15 +188,10 @@ public class DirectPublisher {
                 if (e instanceof JCSMPTransportException) {  // all reconnect attempts failed
                     isShutdown = true;  // let's quit; or, could initiate a new connection attempt
                 }
-            } finally {  // add a delay between messages
-                try {
-                    Thread.sleep(1000 / APPROX_MSG_RATE_PER_SEC);  // do Thread.sleep(0) for max speed
-                    // Note: STANDARD Edition Solace broker is limited to 10k msg/s max ingress
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();  // restore the interrupt status, do not swallow it
-                    isShutdown = true;
-                }
             }
+            // no delay between messages: the loop publishes as fast as send() returns, the way an
+            // application publishes each message as soon as it has one
+            // Note: STANDARD Edition Solace broker is limited to 10k msg/s max ingress
         }
         isShutdown = true;
     }

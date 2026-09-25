@@ -65,7 +65,6 @@ from solace_connection_config import load_service_properties
 APP_NAME = "GuaranteedPublisher"
 TOPIC_PREFIX = "solace/samples/"  # used as the topic "root"
 API = "Python"
-APPROX_MSG_RATE_PER_SEC = 100
 PAYLOAD_SIZE = 512
 # reconnect budget: 20 attempts 3 s apart, a minute of reconnect attempts, a reasonable
 # default when the design says nothing about high availability. The interval is in
@@ -239,8 +238,8 @@ def run_publish_loop(state: PublisherState) -> None:
             logger.warning("publish() failed, quitting: %s", error)
             state.exit_code = 1
             break  # let's quit; or, could initiate a new connection attempt
-        # delay between messages; the wait returns early once shutdown is requested
-        state.shutdown.wait(1.0 / APPROX_MSG_RATE_PER_SEC)  # wait(0) for max speed
+        # no delay between messages: the loop publishes as fast as publish() returns, the way
+        # an application publishes each message as soon as it has one
         # Note: STANDARD Edition Solace broker is limited to 10k msg/s max ingress
     state.shutdown.set()
 
