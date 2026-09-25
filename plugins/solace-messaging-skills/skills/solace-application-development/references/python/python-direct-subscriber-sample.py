@@ -21,9 +21,10 @@ buffer that detects discards, reconnection and service interruption listeners
 registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown. Direct
 messaging is at-most-once: there is no broker ACK and no redelivery, so there is
 NO client acknowledgement here (the inverse of the guaranteed subscriber).
-Structured as module-level functions, setup_solace(...), await_messages(...), and
-teardown_solace(...), that share one SubscriberState; main() runs teardown from
-its finally on every exit path.
+Structured as module-level functions, setup_solace(...), connect_solace(...),
+await_messages(...), and teardown_solace(...), that share one SubscriberState;
+setup_solace() creates the service and the receiver before any connection exists,
+and main() runs teardown from its finally on every exit path after that.
 
 Only practices documented in canonical Solace sources are encoded here.
 
@@ -39,7 +40,7 @@ import logging
 import signal
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from solace.messaging.config.retry_strategy import RetryStrategy
 from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PubSubPlusClientError
@@ -73,7 +74,12 @@ RECONNECT_RETRY_INTERVAL_MS = 3000
 #     properties[transport_layer_properties.CONNECTION_RETRIES_PER_HOST] = 5
 # back pressure: once this many received messages wait for the handler, the receiver
 # discards each new incoming message until there is room
-RECEIVE_BUFFER_CAPACITY = 50
+# The capacity is a count of messages, not a size in bytes: the memory it holds depends on
+# the size of each message. Tune it to the memory the application's deployment can give
+# the buffer. The API has no default capacity (its default, on_back_pressure_elastic,
+# buffers without bound); 1000 is the value the Python developer guide uses in its back
+# pressure examples.
+RECEIVE_BUFFER_CAPACITY = 1000
 # terminate(grace_period): how long to wait for the handler to drain the messages the API
 # has already received before the receiver stops; terminate() raises
 # IncompleteMessageDeliveryError when messages remain after that. A bounded grace period
@@ -90,12 +96,14 @@ logger = logging.getLogger(APP_NAME)
 @dataclass
 class SubscriberState:
     """What the main loop, the signal handler, and the API listener threads share: the
-    service, the receiver, the flags the listeners flip, and the counters. Use this type of
-    app for receiving Direct (at-most-once) messages from a topic."""
-    messaging_service: MessagingService | None = None
-    receiver: DirectMessageReceiver | None = None
+    service, the receiver, the shutdown event, the flags the listeners flip, and the
+    counters. The service and the receiver are required, so every SubscriberState holds
+    both (built, though not necessarily connected or started). Use this type of app for
+    receiving Direct (at-most-once) messages from a topic."""
+    messaging_service: MessagingService
+    receiver: DirectMessageReceiver
+    shutdown: threading.Event
     connect_attempted: bool = False
-    shutdown: threading.Event = field(default_factory=threading.Event)
     exit_code: int = 0  # set to 1 on a failure exit (service interruption or a failed terminate())
     msg_recv_counter: int = 0  # num messages received
     has_detected_discard: bool = False  # any discards seen?
@@ -103,21 +111,24 @@ class SubscriberState:
 
 def main(args: list[str]) -> int:
     trace(f"{API} {APP_NAME} initializing...")
-    state = SubscriberState()
+    shutdown = threading.Event()
 
     def on_shutdown_signal(signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping subscriber...")
-        state.shutdown.set()
+        shutdown.set()
 
+    # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
+    # loop exits, and teardown_solace() in the finally below stops the receiver and
+    # disconnects. Python runs signal handlers on the main thread, so the handler only
+    # flags; the cleanup runs on the main thread's normal exit path. Registered before
+    # connect, so a SIGTERM during the blocking connect() still reaches teardown.
+    signal.signal(signal.SIGINT, on_shutdown_signal)
+    signal.signal(signal.SIGTERM, on_shutdown_signal)
+    # setup_solace() raises before any connection exists, so there is nothing to tear down
+    # if it fails
+    state = setup_solace(args, shutdown)
     try:
-        # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
-        # loop exits, and teardown_solace() in the finally below stops the receiver and
-        # disconnects. Python runs signal handlers on the main thread, so the handler only
-        # flags; the cleanup runs on the main thread's normal exit path. Registered before
-        # setup, so a SIGTERM during the blocking connect() still reaches teardown.
-        signal.signal(signal.SIGINT, on_shutdown_signal)
-        signal.signal(signal.SIGTERM, on_shutdown_signal)
-        setup_solace(state, args)
+        connect_solace(state)
         await_messages(state)
     finally:
         teardown_solace(state)
@@ -125,30 +136,20 @@ def main(args: list[str]) -> int:
     return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
 
-def setup_solace(state: SubscriberState, args: list[str]) -> None:
+def setup_solace(args: list[str], shutdown: threading.Event) -> SubscriberState:
     # basic username/password connection details, built by the shared connection-config
     # helper: read from a config.json in the working directory if present, else from the
     # command line (<host:port> <message-vpn> <client-username> [password])
     properties = load_service_properties(args, APP_NAME)
     # build() creates the native session and resolves the host, so an unresolvable host
     # fails here, before connect()
-    state.messaging_service = (
+    messaging_service = (
         MessagingService.builder()
         .from_properties(properties)
         .with_reconnection_retry_strategy(
             RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
         .build()
     )
-    # best practice: register the service event listeners BEFORE connect(), so no
-    # reconnection or interruption event raised during or right after the connect is lost,
-    # and handle each event appropriately rather than only logging it
-    service_events = ServiceEventHandler(state)
-    state.messaging_service.add_reconnection_attempt_listener(service_events)
-    state.messaging_service.add_reconnection_listener(service_events)
-    state.messaging_service.add_service_interruption_listener(service_events)
-    state.connect_attempted = True
-    state.messaging_service.connect()  # blocking connect
-
     # DIRECT receiver: a topic subscription on the receiver (no queue, no provisioning).
     # Direct messaging is at-most-once: messages flow straight to the subscriber with no
     # broker ACK and no redelivery. start() applies the subscription and blocks until the
@@ -157,14 +158,29 @@ def setup_solace(state: SubscriberState, args: list[str]) -> None:
     # handler, on_back_pressure_drop_latest(n) discards each new incoming message, and the
     # next message delivered carries an internal discard indication. The API default
     # (on_back_pressure_elastic) buffers without bound; on_back_pressure_drop_oldest(n)
-    # discards the oldest buffered message instead.
-    trace(f"Adding direct topic subscription '{TOPIC_NAME}'.")
-    state.receiver = (
-        state.messaging_service.create_direct_message_receiver_builder()
+    # discards the oldest buffered message instead. Building the receiver needs only the
+    # built service; start() is what requires the connection.
+    receiver = (
+        messaging_service.create_direct_message_receiver_builder()
         .with_subscriptions([TopicSubscription.of(TOPIC_NAME)])
         .on_back_pressure_drop_latest(RECEIVE_BUFFER_CAPACITY)
         .build()
     )
+    state = SubscriberState(messaging_service=messaging_service, receiver=receiver, shutdown=shutdown)
+    # best practice: register the service event listeners BEFORE connect(), so no
+    # reconnection or interruption event raised during or right after the connect is lost,
+    # and handle each event appropriately rather than only logging it
+    service_events = ServiceEventHandler(state)
+    messaging_service.add_reconnection_attempt_listener(service_events)
+    messaging_service.add_reconnection_listener(service_events)
+    messaging_service.add_service_interruption_listener(service_events)
+    return state
+
+
+def connect_solace(state: SubscriberState) -> None:
+    state.connect_attempted = True
+    state.messaging_service.connect()  # blocking connect
+    trace(f"Adding direct topic subscription '{TOPIC_NAME}'.")
     state.receiver.start()
     # see bottom of file for DirectMessageHandler, which receives the messages from the topic
     state.receiver.receive_async(DirectMessageHandler(state))
@@ -182,11 +198,12 @@ def await_messages(state: SubscriberState) -> None:
 
 
 def teardown_solace(state: SubscriberState) -> None:
-    # Application cleanup belongs here: teardown_solace() runs in main's finally on
-    # EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, or an
-    # exception), so Solace teardown and application-side cleanup are never skipped.
+    # Application cleanup belongs here: once setup_solace() returns, teardown_solace() runs
+    # in main's finally on EVERY exit path (normal quit, SIGINT/SIGTERM, service
+    # interruption, or an exception), so Solace teardown and application-side cleanup are
+    # never skipped.
     state.shutdown.set()
-    if state.receiver is not None and state.receiver.is_running():
+    if state.receiver.is_running():
         # direct is at-most-once: there are no acknowledgements to drain before exit, so
         # terminate() stops delivery and gives the handler up to the grace period to drain
         # the messages the API has already received. It raises IncompleteMessageDeliveryError

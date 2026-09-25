@@ -22,9 +22,10 @@ queue plus a topic subscription so a fresh broker works out of the box, a
 CLIENT-ack receiver that ACKs only after processing, receiver active/passive state
 and termination handling, reconnection and service interruption listeners
 registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown. Structured as
-module-level functions, setup_solace(...), await_messages(...), and
-teardown_solace(...), that share one SubscriberState; main() runs teardown from its
-finally on every exit path.
+module-level functions, setup_solace(...), connect_solace(...), await_messages(...),
+and teardown_solace(...), that share one SubscriberState; setup_solace() creates the
+service and the receiver before any connection exists, and main() runs teardown from
+its finally on every exit path after that.
 
 Only practices documented in canonical Solace sources are encoded here.
 
@@ -40,7 +41,7 @@ import logging
 import signal
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from solace.messaging.config.missing_resources_creation_configuration import MissingResourcesCreationStrategy
 from solace.messaging.config.receiver_activation_passivation_configuration import (
@@ -96,12 +97,14 @@ logger = logging.getLogger(APP_NAME)
 @dataclass
 class SubscriberState:
     """What the main loop, the signal handler, and the API listener threads share: the
-    service, the receiver, the flags the listeners flip, and the counters. Use this type of
-    app for receiving Guaranteed messages (e.g. via a queue endpoint)."""
-    messaging_service: MessagingService | None = None
-    receiver: PersistentMessageReceiver | None = None
+    service, the receiver, the shutdown event, the flags the listeners flip, and the
+    counters. The service and the receiver are required, so every SubscriberState holds
+    both (built, though not necessarily connected or started). Use this type of app for
+    receiving Guaranteed messages (e.g. via a queue endpoint)."""
+    messaging_service: MessagingService
+    receiver: PersistentMessageReceiver
+    shutdown: threading.Event
     connect_attempted: bool = False
-    shutdown: threading.Event = field(default_factory=threading.Event)
     exit_code: int = 0  # set to 1 on a failure exit (service interruption, receiver termination, or a failed terminate())
     msg_recv_counter: int = 0  # num messages received
     has_detected_redelivery: bool = False  # detected any messages being redelivered?
@@ -109,21 +112,24 @@ class SubscriberState:
 
 def main(args: list[str]) -> int:
     trace(f"{API} {APP_NAME} initializing...")
-    state = SubscriberState()
+    shutdown = threading.Event()
 
     def on_shutdown_signal(signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping consumer...")
-        state.shutdown.set()
+        shutdown.set()
 
+    # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
+    # loop exits, and teardown_solace() in the finally below stops the receiver and
+    # disconnects. Python runs signal handlers on the main thread, so the handler only
+    # flags; the cleanup runs on the main thread's normal exit path. Registered before
+    # connect, so a SIGTERM during the blocking connect() still reaches teardown.
+    signal.signal(signal.SIGINT, on_shutdown_signal)
+    signal.signal(signal.SIGTERM, on_shutdown_signal)
+    # setup_solace() raises before any connection exists, so there is nothing to tear down
+    # if it fails
+    state = setup_solace(args, shutdown)
     try:
-        # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the main
-        # loop exits, and teardown_solace() in the finally below stops the receiver and
-        # disconnects. Python runs signal handlers on the main thread, so the handler only
-        # flags; the cleanup runs on the main thread's normal exit path. Registered before
-        # setup, so a SIGTERM during the blocking connect() still reaches teardown.
-        signal.signal(signal.SIGINT, on_shutdown_signal)
-        signal.signal(signal.SIGTERM, on_shutdown_signal)
-        if not setup_solace(state, args):
+        if not connect_solace(state):
             return 1  # the bind failed; the finally below still runs teardown
         await_messages(state)
     finally:
@@ -132,30 +138,20 @@ def main(args: list[str]) -> int:
     return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
 
-def setup_solace(state: SubscriberState, args: list[str]) -> bool:
+def setup_solace(args: list[str], shutdown: threading.Event) -> SubscriberState:
     # basic username/password connection details, built by the shared connection-config
     # helper: read from a config.json in the working directory if present, else from the
     # command line (<host:port> <message-vpn> <client-username> [password])
     properties = load_service_properties(args, APP_NAME)
     # build() creates the native session and resolves the host, so an unresolvable host
     # fails here, before connect()
-    state.messaging_service = (
+    messaging_service = (
         MessagingService.builder()
         .from_properties(properties)
         .with_reconnection_retry_strategy(
             RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
         .build()
     )
-    # best practice: register the service event listeners BEFORE connect(), so no
-    # reconnection or interruption event raised during or right after the connect is lost,
-    # and handle each event appropriately rather than only logging it
-    service_events = ServiceEventHandler(state)
-    state.messaging_service.add_reconnection_attempt_listener(service_events)
-    state.messaging_service.add_reconnection_listener(service_events)
-    state.messaging_service.add_service_interruption_listener(service_events)
-    state.connect_attempted = True
-    state.messaging_service.connect()  # blocking connect
-
     # configure the queue API object locally: durable, exclusive (single-consumer sample)
     queue = Queue.durable_exclusive_queue(QUEUE_NAME)
 
@@ -167,7 +163,7 @@ def setup_solace(state: SubscriberState, args: list[str]) -> bool:
     # to the queue at start (pub/sub onto a queue). A re-run reuses the existing queue
     # and subscription.
     receiver_builder = (
-        state.messaging_service.create_persistent_message_receiver_builder()
+        messaging_service.create_persistent_message_receiver_builder()
         .with_missing_resources_creation_strategy(MissingResourcesCreationStrategy.CREATE_ON_START)
         .with_subscriptions([TopicSubscription.of(TOPIC_NAME)])
         # best practice: client acknowledgement (also the API default), so a message leaves
@@ -177,11 +173,27 @@ def setup_solace(state: SubscriberState, args: list[str]) -> bool:
         # is ACTIVE; any other is PASSIVE (bound, not receiving) until the active one goes away
         .with_activation_passivation_support(ReceiverStateHandler())
     )
-    trace(f"Attempting to bind to queue '{QUEUE_NAME}' on the broker.")
-    state.receiver = receiver_builder.build(queue)
+    # building the receiver needs only the built service; start() is what requires the
+    # connection
+    receiver = receiver_builder.build(queue)
+    state = SubscriberState(messaging_service=messaging_service, receiver=receiver, shutdown=shutdown)
     # a broker-initiated termination (for example the queue was deleted or shut down)
     # surfaces here; the handler ends the main loop (see ReceiverTerminationHandler below)
-    state.receiver.set_termination_notification_listener(ReceiverTerminationHandler(state))
+    receiver.set_termination_notification_listener(ReceiverTerminationHandler(state))
+    # best practice: register the service event listeners BEFORE connect(), so no
+    # reconnection or interruption event raised during or right after the connect is lost,
+    # and handle each event appropriately rather than only logging it
+    service_events = ServiceEventHandler(state)
+    messaging_service.add_reconnection_attempt_listener(service_events)
+    messaging_service.add_reconnection_listener(service_events)
+    messaging_service.add_service_interruption_listener(service_events)
+    return state
+
+
+def connect_solace(state: SubscriberState) -> bool:
+    state.connect_attempted = True
+    state.messaging_service.connect()  # blocking connect
+    trace(f"Attempting to bind to queue '{QUEUE_NAME}' on the broker.")
     try:
         # start() provisions the queue plus its subscription (CREATE_ON_START) and binds
         # to the queue; the broker then starts sending messages on this receiver
@@ -208,12 +220,12 @@ def await_messages(state: SubscriberState) -> None:
 
 
 def teardown_solace(state: SubscriberState) -> None:
-    # Application cleanup belongs here: teardown_solace() runs in main's finally on
-    # EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, receiver
-    # termination, or an exception), so Solace teardown and application-side cleanup
-    # are never skipped.
+    # Application cleanup belongs here: once setup_solace() returns, teardown_solace() runs
+    # in main's finally on EVERY exit path (normal quit, SIGINT/SIGTERM, service
+    # interruption, receiver termination, or an exception), so Solace teardown and
+    # application-side cleanup are never skipped.
     state.shutdown.set()
-    if state.receiver is not None and state.receiver.is_running():
+    if state.receiver.is_running():
         # gracefully stop delivery before exit: terminate(grace_period) stops the receiver
         # and gives the handler up to the grace period to drain (and ACK) the messages the
         # API has already received. The receiver turns TERMINATED once its buffer is empty,

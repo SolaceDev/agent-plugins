@@ -18,11 +18,12 @@ Reference sample. Wired for a basic publish-subscribe journey: basic-auth connec
 with a reconnection retry strategy, PERSISTENT binary publish to a topic, publish
 receipt (ACK/NACK) handling correlated by user context, capacity-bounded back
 pressure that blocks publish() while the buffer is full, reconnection and service
-interruption listeners registered BEFORE connect() that pause publishing while the
-transport is down, and a graceful SIGINT/SIGTERM shutdown that drains outstanding
+interruption listeners registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown that drains outstanding
 receipts before disconnecting. Structured as module-level functions,
-setup_solace(...), run_publish_loop(...), and teardown_solace(...), that share one
-PublisherState; main() runs teardown from its finally on every exit path.
+setup_solace(...), connect_solace(...), run_publish_loop(...), and teardown_solace(...),
+that share one PublisherState; setup_solace() creates the service and the publisher
+before any connection exists, and main() runs teardown from its finally on every exit
+path after that.
 
 Only practices documented in canonical Solace sources are encoded here.
 
@@ -39,7 +40,7 @@ import signal
 import sys
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from solace.messaging.config.retry_strategy import RetryStrategy
 from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PubSubPlusClientError
@@ -75,7 +76,12 @@ RECONNECT_RETRY_INTERVAL_MS = 3000
 #     with_reconnection_retry_strategy(RetryStrategy.parametrized_retry(20, 3000)),
 #     properties[transport_layer_properties.CONNECTION_RETRIES_PER_HOST] = 5
 # back pressure: publish() blocks once this many messages wait unsent, until there is room
-PUBLISH_BUFFER_CAPACITY = 50
+# The capacity is a count of messages, not a size in bytes: the memory it holds depends on
+# the size of each message. Tune it to the memory the application's deployment can give
+# the buffer. The API has no default capacity (its default, on_back_pressure_elastic,
+# buffers without bound); 1000 is the value the Python developer guide uses in its back
+# pressure examples.
+PUBLISH_BUFFER_CAPACITY = 1000
 # terminate(grace_period): how long to wait for buffered sends and their broker receipts
 # to complete before the publisher stops; terminate() raises IncompleteMessageDeliveryError
 # when sends or receipts are still outstanding after that. A bounded grace period keeps
@@ -92,34 +98,38 @@ logger = logging.getLogger(APP_NAME)
 @dataclass
 class PublisherState:
     """What the publish loop, the signal handler, and the API listener threads share: the
-    service, the publisher, the flags the listeners flip, and the counters."""
-    messaging_service: MessagingService | None = None
-    publisher: PersistentMessagePublisher | None = None
+    service, the publisher, the shutdown event, and the counters. The service and the
+    publisher are required, so every PublisherState holds both (built, though not
+    necessarily connected or started)."""
+    messaging_service: MessagingService
+    publisher: PersistentMessagePublisher
+    shutdown: threading.Event
     connect_attempted: bool = False
-    is_connected: bool = True  # tracks transport state via the reconnection listeners
-    shutdown: threading.Event = field(default_factory=threading.Event)
     exit_code: int = 0  # set to 1 on a failure exit (service interruption, a publish() failure, or a failed terminate())
     msg_sent_counter: int = 0  # num messages sent
 
 
 def main(args: list[str]) -> int:
     trace(f"{API} {APP_NAME} initializing...")
-    state = PublisherState()
+    shutdown = threading.Event()
 
     def on_shutdown_signal(signum: int, _frame) -> None:
         trace(f"Shutdown signal received ({signal.Signals(signum).name}), stopping publisher...")
-        state.shutdown.set()
+        shutdown.set()
 
+    # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the publish
+    # loop exits, and teardown_solace() in the finally below drains the outstanding
+    # receipts and disconnects. Python runs signal handlers on the main thread, so the
+    # handler only flags; the cleanup runs on the main thread's normal exit path.
+    # Registered before connect, so a SIGTERM during the blocking connect() still reaches
+    # teardown.
+    signal.signal(signal.SIGINT, on_shutdown_signal)
+    signal.signal(signal.SIGTERM, on_shutdown_signal)
+    # setup_solace() raises before any connection exists, so there is nothing to tear down
+    # if it fails
+    state = setup_solace(args, shutdown)
     try:
-        # graceful shutdown: SIGINT (Ctrl-C) or SIGTERM sets the shutdown event, the publish
-        # loop exits, and teardown_solace() in the finally below drains the outstanding
-        # receipts and disconnects. Python runs signal handlers on the main thread, so the
-        # handler only flags; the cleanup runs on the main thread's normal exit path.
-        # Registered before setup, so a SIGTERM during the blocking connect() still reaches
-        # teardown.
-        signal.signal(signal.SIGINT, on_shutdown_signal)
-        signal.signal(signal.SIGTERM, on_shutdown_signal)
-        setup_solace(state, args)
+        connect_solace(state)
         run_publish_loop(state)
     finally:
         teardown_solace(state)
@@ -127,41 +137,47 @@ def main(args: list[str]) -> int:
     return state.exit_code  # non-zero after a failure, so scripts and supervisors see it
 
 
-def setup_solace(state: PublisherState, args: list[str]) -> None:
+def setup_solace(args: list[str], shutdown: threading.Event) -> PublisherState:
     # basic username/password connection details, built by the shared connection-config
     # helper: read from a config.json in the working directory if present, else from the
     # command line (<host:port> <message-vpn> <client-username> [password])
     properties = load_service_properties(args, APP_NAME)
     # build() creates the native session and resolves the host, so an unresolvable host
     # fails here, before connect()
-    state.messaging_service = (
+    messaging_service = (
         MessagingService.builder()
         .from_properties(properties)
         .with_reconnection_retry_strategy(
             RetryStrategy.parametrized_retry(RECONNECT_RETRIES, RECONNECT_RETRY_INTERVAL_MS))
         .build()
     )
-    # best practice: register the service event listeners BEFORE connect(), so no
-    # reconnection or interruption event raised during or right after the connect is lost,
-    # and handle each event appropriately rather than only logging it
-    service_events = ServiceEventHandler(state)
-    state.messaging_service.add_reconnection_attempt_listener(service_events)
-    state.messaging_service.add_reconnection_listener(service_events)
-    state.messaging_service.add_service_interruption_listener(service_events)
-    state.connect_attempted = True
-    state.messaging_service.connect()  # blocking connect
-
     # PERSISTENT publisher with capacity-bounded back pressure: publish() blocks once
     # PUBLISH_BUFFER_CAPACITY messages wait unsent, and returns when there is room again.
     # The API default (on_back_pressure_elastic) buffers without bound and the developer
     # guide cautions it can exhaust memory; on_back_pressure_reject(n) raises
-    # PublisherOverflowError instead of blocking.
-    state.publisher = (
-        state.messaging_service.create_persistent_message_publisher_builder()
+    # PublisherOverflowError instead of blocking. Building the publisher needs only the
+    # built service; start() is what requires the connection. One service can serve
+    # several publishers.
+    publisher = (
+        messaging_service.create_persistent_message_publisher_builder()
         .on_back_pressure_wait(PUBLISH_BUFFER_CAPACITY)
         .build()
     )
-    state.publisher.start()
+    state = PublisherState(messaging_service=messaging_service, publisher=publisher, shutdown=shutdown)
+    # best practice: register the service event listeners BEFORE connect(), so no
+    # reconnection or interruption event raised during or right after the connect is lost,
+    # and handle each event appropriately rather than only logging it
+    service_events = ServiceEventHandler(state)
+    messaging_service.add_reconnection_attempt_listener(service_events)
+    messaging_service.add_reconnection_listener(service_events)
+    messaging_service.add_service_interruption_listener(service_events)
+    return state
+
+
+def connect_solace(state: PublisherState) -> None:
+    state.connect_attempted = True
+    state.messaging_service.connect()  # blocking connect
+    state.publisher.start()  # raises IllegalStateError unless the service is connected
     # best practice: check every publish receipt; a receipt that carries an exception is a
     # NACK or a failure to persist (see PublishReceiptHandler at the bottom of the file).
     # The listener is set AFTER start(): the API raises IllegalStateError on a publisher
@@ -184,9 +200,6 @@ def run_publish_loop(state: PublisherState) -> None:
     trace(f"Publishing to topic '{TOPIC_PREFIX}{API.lower()}/pers/pub/...', "
           "please ensure queue has matching subscription.")
     while not state.shutdown.is_set():
-        if not state.is_connected:  # transport is down: wait for the API's automatic reconnect
-            state.shutdown.wait(0.1)
-            continue
         # each loop, change the payload as an example
         chosen_character = chr(state.msg_sent_counter % 26 + 65)  # choose a "random" letter [A-Z]
         # a bytearray payload travels as the binary attachment; consumers read it back with
@@ -201,7 +214,11 @@ def run_publish_loop(state: PublisherState) -> None:
             # user_context for local ACK/NACK correlation: the API hands it back in the
             # PublishReceipt, so an immutable per-send identifier (the message id) lets the
             # receipt handler name the exact message the broker accepted or rejected.
-            # publish() blocks while the buffer is full (back pressure). A shutdown signal that
+            # publish() blocks while the buffer is full (back pressure). During an automatic
+            # reconnect the messages wait in the buffer for the transport and go out after
+            # it, and publish() blocks only once the buffer fills; the loop needs no pause of
+            # its own (the direct publisher, whose messages fail instead of waiting, does need
+            # one). A shutdown signal that
             # arrives during that wait takes effect once publish() returns: when the buffer
             # drains, or when the service goes down and the API releases the wait.
             state.publisher.publish(message, topic, user_context=msg_id)
@@ -225,11 +242,12 @@ def print_stats(state: PublisherState) -> None:
 
 
 def teardown_solace(state: PublisherState) -> None:
-    # Application cleanup belongs here: teardown_solace() runs in main's finally on
-    # EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, or an
-    # exception), so Solace teardown and application-side cleanup are never skipped.
+    # Application cleanup belongs here: once setup_solace() returns, teardown_solace() runs
+    # in main's finally on EVERY exit path (normal quit, SIGINT/SIGTERM, service
+    # interruption, or an exception), so Solace teardown and application-side cleanup are
+    # never skipped.
     state.shutdown.set()
-    if state.publisher is not None and state.publisher.is_running():
+    if state.publisher.is_running():
         # gracefully finish outstanding receipts before exit: terminate(grace_period) first
         # sends what is still buffered, then waits up to the grace period for the broker's
         # receipt of every published message, so no in-flight PERSISTENT message is
@@ -271,14 +289,14 @@ class ServiceEventHandler(ReconnectionAttemptListener, ReconnectionListener, Ser
         self.state = state
 
     def on_reconnecting(self, event: ServiceEvent) -> None:
-        # connection lost, automatic reconnect attempt in progress: pause publishing
-        logger.warning("Service reconnecting, pausing publishing: %s (%s)", event.get_message(), event.get_cause())
-        self.state.is_connected = False
+        # connection lost, automatic reconnect attempt in progress: new messages wait in the
+        # buffer (publish() blocks once it is full) and go out after the reconnect, so no
+        # guaranteed message is lost
+        logger.warning("Service reconnecting: %s (%s)", event.get_message(), event.get_cause())
 
     def on_reconnected(self, event: ServiceEvent) -> None:
-        # automatic reconnect succeeded: resume publishing
-        logger.info("Service reconnected to %s, resuming publishing", event.get_broker_uri())
-        self.state.is_connected = True
+        # automatic reconnect succeeded: the waiting messages go out
+        logger.info("Service reconnected to %s", event.get_broker_uri())
 
     def on_service_interrupted(self, event: ServiceEvent) -> None:
         # the connection went down and cannot be restored (reconnect attempts exhausted)
