@@ -7,7 +7,7 @@ name: ci
 #                  + post-merge version backstop on pushes to main
 #   link-check:    CI-02: the tools/check-links.sh sweep
 #   compile-check: EVAL-02 compile the baked JCSMP samples verbatim
-#   trigger-evals: lightweight skill-triggering check; self-skips green without a key
+#   trigger-evals: lightweight skill-triggering check; disabled until CI may hold an API key
 on:
   # Deliberately no `edited` type: running on title/body edits either re-runs
   # the paid eval matrix for a no-code change or, if jobs are gated, lets the
@@ -133,7 +133,11 @@ jobs:
   # run summary. The secret is legal in the job env but illegal in a job-level
   # if, so the guard reads HAS_KEY at step level and the real key is scoped to
   # the run step only.
+  # Disabled: no policy permits an API key on this public repo, so the job can
+  # only self-skip. Run the trigger evals locally instead; remove this `if` to
+  # re-enable the job once a key is allowed.
   trigger-evals:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 120                  # per model leg; 57 cases x 3 runs (~50 min observed)
     strategy:

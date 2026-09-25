@@ -8,15 +8,15 @@ To run the evals manually, you need the `claude` CLI and `jq` on your PATH, plus
 
 ```shell
 export ANTHROPIC_API_KEY=<your key>          # or CLAUDE_CODE_OAUTH_TOKEN
-./tools/run-trigger-evals.sh                 # defaults to claude-haiku-4-5
-./tools/run-trigger-evals.sh --model claude-sonnet-5
+./tools/run-trigger-evals.sh                 # defaults to a Haiku model
+./tools/run-trigger-evals.sh --model sonnet   # the latest Sonnet
 ```
 
 Each prompt runs three times and the verdict is the majority result. Set `TRIGGER_EVAL_RUNS=1` for a quicker, cheaper local check, and `TRIGGER_EVAL_MODEL` to change the default model. A run passes when at least 90% of cases match their expectation, and any infrastructure failure (such as a missing credential, a malformed corpus, or zero discovered cases) fails the run regardless of the rate. A case may also set `"must_pass": true`, and any must-pass failure fails the run regardless of the pooled rate. Note that a negative case asserts only that the named skill stays silent, so another skill in the plugin may legitimately fire on the same prompt.
 
 ## Continuous integration
 
-In GitHub Actions, the `trigger-evals` job in `.github/workflows/ci.yml` runs this same script on every pull request as a two model matrix (`claude-haiku-4-5` and `claude-sonnet-5`), each model an independent check, and self-skips green when the `ANTHROPIC_API_KEY` secret is absent.
+The `trigger-evals` job in `.github/workflows/ci.yml` is disabled (`if: false`), because no policy permits an API key on this public repository. Run the trigger evals locally as shown above. To re-enable the job once a key is allowed, remove the `if`. It then runs this same script on every pull request as a two model matrix (Haiku and Sonnet), each model an independent check, and self-skips green when the `ANTHROPIC_API_KEY` secret is absent.
 
 # Output evals
 
@@ -60,12 +60,12 @@ Run from the repository root:
 
 ```shell
 export ANTHROPIC_API_KEY=<your key>            # or CLAUDE_CODE_OAUTH_TOKEN
-./tools/run-output-evals.sh                    # defaults to claude-sonnet-5
-./tools/run-output-evals.sh --model claude-opus-5
+./tools/run-output-evals.sh                    # defaults to a Sonnet model
+./tools/run-output-evals.sh --model opus       # the latest Opus
 ./tools/run-output-evals.sh --case appdev-quickstart-implement-full
 ```
 
-Run the suite for both `claude-sonnet-5` and `claude-opus-5` before a PR that affects skill content, and record both results in the PR description, including whether live verify ran or skipped (the runner prints this in its summary). A full leg is a long run; keep the machine awake for it (on macOS, prefix the command with `caffeinate -i`), because a sleep mid-run surfaces as INFRA failures. A permission denial of a tool the runner grants (Bash, Write, and the rest of its allowlist) is also INFRA: managed settings, hooks, or local command shims can deny a command, the model then improvises, and the result no longer measures the skill. The case line names the denied tool and command; adjust the policy for the run instead of reading the result as a skill failure. Each case runs once by default (`OUTPUT_EVAL_RUNS=1`), because a full implement-flow case is expensive; raise it for a majority-vote stability study. `OUTPUT_EVAL_JUDGE_MODEL` (default `claude-sonnet-5`) stays fixed across subject models so leg differences are attributable to the subject. `OUTPUT_EVAL_WORKDIR` receives transcripts and generated projects, and the work directory is kept and printed when the run fails.
+Run the suite for both the latest Sonnet and the latest Opus (`--model sonnet` and `--model opus`) before a PR that affects skill content, and record both results in the PR description, including whether live verify ran or skipped (the runner prints this in its summary). A full leg is a long run; keep the machine awake for it (on macOS, prefix the command with `caffeinate -i`), because a sleep mid-run surfaces as INFRA failures. A permission denial of a tool the runner grants (Bash, Write, and the rest of its allowlist) is also INFRA: managed settings, hooks, or local command shims can deny a command, the model then improvises, and the result no longer measures the skill. The case line names the denied tool and command; adjust the policy for the run instead of reading the result as a skill failure. Each case runs once by default (`OUTPUT_EVAL_RUNS=1`), because a full implement-flow case is expensive; raise it for a majority-vote stability study. `OUTPUT_EVAL_JUDGE_MODEL` (default a pinned Sonnet model) stays fixed across subject models so leg differences are attributable to the subject. `OUTPUT_EVAL_WORKDIR` receives transcripts and generated projects, and the work directory is kept and printed when the run fails.
 
 The gate matches the trigger evals: a run passes when at least 90% of cases pass, any infrastructure failure fails the run, and any `must_pass` failure fails the run regardless of the pooled rate. The forbidden-behavior negatives and the compile case are `must_pass`.
 
