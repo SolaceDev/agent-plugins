@@ -24,7 +24,8 @@ messaging is at-most-once: there is no broker receipt, so there is NO publish
 receipt listener and NO user context here (the inverse of the guaranteed
 publisher, which acts on each ACK/NACK), and there are no outstanding receipts to
 drain at shutdown. Messages published while the API reconnects are lost, and each one
-is reported through the publish failure listener. Structured as module-level functions, setup_solace(...),
+is reported through the publish failure listener. Publishes the payload directly, with
+no OutboundMessageBuilder. Structured as module-level functions, setup_solace(...),
 connect_solace(...), run_publish_loop(...), and teardown_solace(...), that share one
 PublisherState; setup_solace() creates the service and the publisher before any
 connection exists, and main() runs teardown from its finally on every exit path after that.
@@ -43,7 +44,6 @@ import logging
 import signal
 import sys
 import threading
-import uuid
 from dataclasses import dataclass
 
 from solace.messaging.config.retry_strategy import RetryStrategy
@@ -188,8 +188,6 @@ def connect_solace(state: PublisherState) -> None:
 
 def run_publish_loop(state: PublisherState) -> None:
     threading.Thread(target=print_stats, args=(state,), name="stats", daemon=True).start()
-    # best practice: one OutboundMessageBuilder, reused for every message
-    message_builder = state.messaging_service.message_builder()
 
     trace(f"{API} {APP_NAME} connected, and running. Press Ctrl-C to quit.")
     trace(f"Publishing to topic '{TOPIC_PREFIX}{API.lower()}/direct/pub/...', "
@@ -203,7 +201,6 @@ def run_publish_loop(state: PublisherState) -> None:
         # NO user context: direct is at-most-once with no broker receipt, so there is
         # nothing to correlate (the inverse of the guaranteed publisher, which passes the
         # message id as user_context for local ACK/NACK correlation)
-        message = message_builder.with_application_message_id(str(uuid.uuid4())).build(payload)  # as an example
         topic = Topic.of(f"{TOPIC_PREFIX}{API.lower()}/direct/pub/{chosen_character}")
         try:
             # blocks while the buffer is full (back pressure) on a connected transport; during
@@ -211,7 +208,15 @@ def run_publish_loop(state: PublisherState) -> None:
             # shutdown signal that arrives during that wait takes effect once publish()
             # returns: when the buffer drains, or when the service goes down and the API
             # releases the wait.
-            state.publisher.publish(message, topic)
+            # builderless publish: the payload goes to publish() directly, and the API builds the
+            # message. Set a per-message header with additional_message_properties, for example
+            #   additional_message_properties={message_properties.APPLICATION_MESSAGE_ID: msg_id}
+            # with `from solace.messaging.config.solace_properties import message_properties`.
+            # Note: an OutboundMessageBuilder (messaging_service.message_builder()) is very
+            # useful for "templated" messages: set the headers that are the same on every
+            # message once on the builder, and build each message with only its few
+            # differences (see the guaranteed publisher sample).
+            state.publisher.publish(payload, topic)
             state.msg_sent_counter += 1
         except PubSubPlusClientError as error:
             # publish() raises when the message cannot be sent and retrying would not help

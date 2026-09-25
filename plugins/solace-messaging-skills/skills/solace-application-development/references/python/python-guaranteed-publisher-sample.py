@@ -15,11 +15,12 @@ Elevated to documented best practices per the Python API developer guide:
     https://docs.solace.com/API/API-Developer-Guide/C-API-Best-Practices.md
 
 Reference sample. Wired for a basic publish-subscribe journey: basic-auth connect
-with a reconnection retry strategy, PERSISTENT binary publish to a topic, publish
-receipt (ACK/NACK) handling correlated by user context, capacity-bounded back
-pressure that blocks publish() while the buffer is full, reconnection and service
-interruption listeners registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown that drains outstanding
-receipts before disconnecting. Structured as module-level functions,
+with a reconnection retry strategy, PERSISTENT binary publish to a topic from a
+templated message builder that sets the time-to-live once, publish receipt (ACK/NACK)
+handling correlated by user context, capacity-bounded back pressure that blocks
+publish() while the buffer is full, reconnection and service interruption listeners
+registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown that drains
+outstanding receipts before disconnecting. Structured as module-level functions,
 setup_solace(...), connect_solace(...), run_publish_loop(...), and teardown_solace(...),
 that share one PublisherState; setup_solace() creates the service and the publisher
 before any connection exists, and main() runs teardown from its finally on every exit
@@ -43,6 +44,7 @@ import uuid
 from dataclasses import dataclass
 
 from solace.messaging.config.retry_strategy import RetryStrategy
+from solace.messaging.config.solace_properties import message_properties
 from solace.messaging.errors.pubsubplus_client_error import IncompleteMessageDeliveryError, PubSubPlusClientError
 from solace.messaging.messaging_service import (
     MessagingService,
@@ -90,6 +92,11 @@ PUBLISH_BUFFER_CAPACITY = 1000
 # to suit the application: longer gives sends and receipts more time to complete, shorter
 # exits sooner.
 TERMINATE_GRACE_PERIOD_MS = 10_000
+# best practice for Guaranteed publishing (C API Best Practices): set a time-to-live so an
+# unconsumed message does not sit on a queue forever. In MILLISECONDS; 0, the API default,
+# never expires. The queue must have respect-ttl enabled (off by default), or the broker
+# ignores the TTL. Adjust the value to how long a message stays useful to its consumers.
+MESSAGE_TTL_MS = 60_000
 
 # API events go through standard logging; the trace() narration below is a separate channel
 logger = logging.getLogger(APP_NAME)
@@ -187,14 +194,14 @@ def connect_solace(state: PublisherState) -> None:
 
 def run_publish_loop(state: PublisherState) -> None:
     threading.Thread(target=print_stats, args=(state,), name="stats", daemon=True).start()
-    # best practice: one OutboundMessageBuilder, reused for every message
-    message_builder = state.messaging_service.message_builder()
-    # best practice for Guaranteed publishing (C API Best Practices): set a time-to-live so
-    # an unconsumed message does not sit on a queue forever. The queue must have respect-ttl
-    # enabled (off by default), or the TTL is ignored. Add the Solace message property to the
-    # builder in milliseconds (0, the default, never expires), for example
-    #   .with_property(message_properties.PERSISTENT_TIME_TO_LIVE, 60_000)
-    # with `from solace.messaging.config.solace_properties import message_properties`.
+    # one OutboundMessageBuilder as a message "template", reused for every message: set the
+    # headers that are the same on every message (here the TTL) once on the builder.
+    # build() starts each message as a copy of the template, so there is no set call per
+    # message for these headers
+    message_builder = (
+        state.messaging_service.message_builder()
+        .with_property(message_properties.PERSISTENT_TIME_TO_LIVE, MESSAGE_TTL_MS)
+    )
 
     trace(f"{API} {APP_NAME} connected, and running. Press Ctrl-C to quit.")
     trace(f"Publishing to topic '{TOPIC_PREFIX}{API.lower()}/pers/pub/...', "
@@ -206,7 +213,11 @@ def run_publish_loop(state: PublisherState) -> None:
         # get_payload_as_bytes() (a str payload would arrive via get_payload_as_string())
         payload = bytearray(chosen_character.encode("ascii") * PAYLOAD_SIZE)
         msg_id = str(uuid.uuid4())
-        message = message_builder.with_application_message_id(msg_id).build(payload)  # as an example
+        # the per-message difference goes in build()'s additional_message_properties, which
+        # applies to this message only; a with_*() call on the builder would change the
+        # template, so every later message would carry it too
+        message = message_builder.build(
+            payload, additional_message_properties={message_properties.APPLICATION_MESSAGE_ID: msg_id})
         # NOTE: publishing to topic, so make sure the consumer's queue is subscribed to the same topic,
         #       or enable "Reject Message to Sender on No Subscription Match" in the client-profile
         topic = Topic.of(f"{TOPIC_PREFIX}{API.lower()}/pers/pub/{chosen_character}")
