@@ -28,7 +28,7 @@ and main() runs teardown from its finally on every exit path after that.
 
 Only practices documented in canonical Solace sources are encoded here.
 
-Copied into a generated project as direct_subscriber.py, next to the shared helper
+Copied into a generated project as direct_subscriber_async.py, next to the shared helper
 python-solace-connection-config.py copied as solace_connection_config.py.
 
 Any generated adaptation of this sample MUST begin with the exact line:
