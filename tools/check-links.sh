@@ -6,8 +6,8 @@
 # Complements the CI validate job (gh skill publish --dry-run), which checks the
 # Agent Skills spec but not links.
 # This sweep additionally:
-#   * covers the WHOLE skills/ tree — SKILL.md, references/*.md, the .java sample
-#     headers, and scripts/*.sh (not just *.md) — while excluding the repo-root
+#   * covers the WHOLE skills/ tree — SKILL.md, references/*.md, the .java and .py
+#     sample headers, and scripts/*.sh (not just *.md) — while excluding the repo-root
 #     README (D-11: the sweep globs the skills/ tree only, never the repo root),
 #   * detects Solace "soft 404s" — pages that return HTTP 200/30x but actually land
 #     on a not-found page (docs.solace.com redirects bad paths to Not-Found.htm;
@@ -74,7 +74,7 @@ should_skip() {
   return 1
 }
 
-# Collect unique http(s) links from the whole skills/ tree (*.md, *.java, *.sh).
+# Collect unique http(s) links from the whole skills/ tree (*.md, *.java, *.py, *.sh).
 # README at the repo root is excluded because ROOT is the skills/ tree, never the
 # repo root (D-11). Doc links are now public docs.solace.com .md URLs, checked inline.
 #
@@ -89,7 +89,7 @@ while IFS= read -r line; do
   links+=("$line")
 done < <(
   grep -rhoE 'https?://[^ )"`'"'"'>]+' "$ROOT" \
-    --include='*.md' --include='*.java' --include='*.sh' \
+    --include='*.md' --include='*.java' --include='*.py' --include='*.sh' \
     --exclude-dir='docs' \
     | sed -E 's/[.,;:*]+$//' \
     | sort -u
