@@ -198,6 +198,11 @@ def setup_solace(properties: dict, shutdown: threading.Event) -> SubscriberState
 def connect_solace(state: SubscriberState) -> bool:
     state.connect_attempted = True
     state.messaging_service.connect()  # blocking connect
+    # set the message handler BEFORE start(), so the handler is in place when delivery
+    # begins and received messages do not wait in the API's buffer for it. receive_async()
+    # needs a connected service, so it runs here after connect(), not in setup_solace().
+    # see bottom of file for QueueMessageHandler, which receives the messages from the queue
+    state.receiver.receive_async(QueueMessageHandler(state, state.receiver))
     trace(f"Attempting to bind to queue '{QUEUE_NAME}' on the broker.")
     try:
         # start() provisions the queue plus its subscription (CREATE_ON_START) and binds
@@ -208,8 +213,6 @@ def connect_solace(state: SubscriberState) -> bool:
                      "provision the queue and its topic subscription out-of-band or grant the "
                      "capability. Exiting.", QUEUE_NAME, error)
         return False  # teardown_solace() in main's finally disconnects
-    # see bottom of file for QueueMessageHandler, which receives the messages from the queue
-    state.receiver.receive_async(QueueMessageHandler(state, state.receiver))
     return True
 
 

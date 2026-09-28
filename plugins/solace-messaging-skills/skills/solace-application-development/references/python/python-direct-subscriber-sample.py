@@ -185,10 +185,13 @@ def setup_solace(properties: dict, shutdown: threading.Event) -> SubscriberState
 def connect_solace(state: SubscriberState) -> None:
     state.connect_attempted = True
     state.messaging_service.connect()  # blocking connect
-    trace(f"Adding direct topic subscription '{TOPIC_NAME}'.")
-    state.receiver.start()
+    # set the message handler BEFORE start(), so the handler is in place when delivery
+    # begins and received messages do not wait in the API's buffer for it. receive_async()
+    # needs a connected service, so it runs here after connect(), not in setup_solace().
     # see bottom of file for DirectMessageHandler, which receives the messages from the topic
     state.receiver.receive_async(DirectMessageHandler(state))
+    trace(f"Adding direct topic subscription '{TOPIC_NAME}'.")
+    state.receiver.start()
     trace(f"{APP_NAME} subscribed and consuming. Press Ctrl-C to quit.")
 
 
