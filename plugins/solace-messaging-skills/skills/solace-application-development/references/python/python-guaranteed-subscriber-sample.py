@@ -29,7 +29,7 @@ its finally on every exit path after that.
 
 Only practices documented in canonical Solace sources are encoded here.
 
-Copied into a generated project as guaranteed_subscriber_async.py, next to the shared
+Copied into a generated project as guaranteed_subscriber.py, next to the shared
 helper python-solace-connection-config.py copied as solace_connection_config.py.
 
 Any generated adaptation of this sample MUST begin with the exact line:
