@@ -38,6 +38,10 @@ curl -s https://pypi.org/pypi/solace-pubsubplus/json \
 
 The package's `requires_python` value on PyPI is an install floor, not a support statement. Solace supports only the Python versions that are in active support and also have security update support (see `python/prerequisites.md`).
 
+## Verify script
+
+The Python API does not bundle a verify script yet. Every Implement run ends in the compile-only fallback that `python/implement-mode.md` Step 5 defines, and never claims a verified run (SKILL.md Invariant 5).
+
 ## Canonical doc links
 
 Python-specific grounding. Each page below is a live `docs.solace.com` `.md` URL, WebFetched on demand; the live exceptions are listed separately because they have no `docs.solace.com` `.md` form.
@@ -46,6 +50,7 @@ Python-specific grounding. Each page below is a live `docs.solace.com` `.md` URL
 - [Python API Developer Guide](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Dev-Guide.md): the index of the developer guide pages.
 - [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md): building and connecting the `MessagingService`.
 - [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md) and [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Receive.md): the guaranteed pub/sub pages.
+- [Request-Reply Messaging in the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Request-Reply.md): request-reply in the Python API, which uses direct messages only.
 - [Creating Queues with the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Create-Queues.md): queue provisioning from the client.
 - [Supported Environments](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-supported-Environments.md): Python versions, platforms, and OpenSSL.
 - [Solace C API Best Practices](https://docs.solace.com/API/API-Developer-Guide/C-API-Best-Practices.md): the Python API has no best practices page of its own. It wraps the C API, so the reference samples ground their callback, reconnect, acknowledgement, and time-to-live practices here.

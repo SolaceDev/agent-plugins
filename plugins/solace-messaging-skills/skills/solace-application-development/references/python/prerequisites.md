@@ -12,7 +12,7 @@ Read this when a developer does not yet have a broker to build against, or when 
 
 You need one reachable broker. The primary, recommended choice is [Solace Cloud](https://docs.solace.com/Get-Started/Getting-Started-Try-Broker.md): it is the simplest path to a running broker for a greenfield app and for the run-and-observe round-trip. Default to it unless the developer has a reason not to.
 
-As brief alternatives, the same page also documents a self-hosted Software Broker (run locally via container or VM) and an Appliance (existing hardware the developer already operates) for developers who cannot use Solace Cloud.
+As a brief alternative, the same page also covers setting up a free broker locally, for developers who cannot use Solace Cloud.
 
 The skill does not provision or configure the broker. It assumes the broker is reachable and that the developer has connection details (host, message VPN, client username, password). A broker discovered running in the environment (for example a local container) is a fact to report, never an answer: still ask which broker the developer wants to target.
 
