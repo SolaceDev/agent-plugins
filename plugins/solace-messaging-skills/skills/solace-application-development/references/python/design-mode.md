@@ -17,6 +17,7 @@ Design mode is ask-or-recommend, not interrogate-first. Before walking the tree,
 | Stated intent in the prompt | Recommended leaf (or branch to lock if partial) |
 |---|---|
 | "request a reply", "needs a correlated response", "ask and wait for an answer" | Request-Reply (Direct) (the delivery question still applies; see the no-guaranteed-request-reply rule below) |
+| "the request must not be lost", "the request must survive the responder being down", "persistent request" | a Guaranteed Pub/Sub leaf with an application correlation id (the no-guaranteed-request-reply rule below; never Request-Reply (Direct)) |
 | "fan out to many services", "broadcast to several independent apps", "every team gets its own copy" | Guaranteed Pub/Sub (fan-out) |
 | "competing workers", "share the load across consumers", "scale out processing of one stream" | Guaranteed Pub/Sub (single service, non-exclusive) |
 | "one active consumer", "strict ordering", "only one worker at a time" | Guaranteed Pub/Sub (single service, exclusive) |
@@ -46,19 +47,17 @@ Ask only the questions the prompt left open, in this order. Before you answer ea
 
 Questions 3 and 4 apply ONLY on the guaranteed publish/subscribe branch. Request-reply and direct publish/subscribe resolve at the delivery-guarantee answer and never reach them.
 
-**No guaranteed request-reply in the Python API.** When question 1 resolves to Request-Reply and question 2 resolves to guaranteed, there is no Python leaf for it. WebFetch [Request-Reply Messaging in the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Request-Reply.md) and quote its note that request-reply messaging can only be used with direct messages in the Python API. Then give the developer the choice in one question: Request-Reply (Direct), which keeps the request-reply shape and accepts direct delivery, or a Guaranteed Pub/Sub leaf, which keeps persistence and leaves the reply correlation to the application. Never invent a guaranteed request-reply leaf and never record `Request-Reply (Guaranteed)` in a Python summary.
+**No guaranteed request-reply in the Python API.** When question 1 resolves to Request-Reply and question 2 resolves to guaranteed (the request must be persisted), there is no Python request-reply leaf for it. WebFetch [Request-Reply Messaging in the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Request-Reply.md) and quote its note that request-reply messaging can only be used with direct messages in the Python API. Then route to Guaranteed Pub/Sub, never to Request-Reply (Direct): the request travels as a persistent message to a durable queue, and the application sets a correlation id on it and matches the answer by that id. Continue the tree at question 3 to pick the Guaranteed Pub/Sub leaf, then record the design as a VARIANT of that leaf (Step 1): name the application correlation id and the answer path in the `Consumption endpoint` field with a short inline reason, for example `durable queue q.acme.orders + topic subscription; application correlation id (persisted request, no Python guaranteed request-reply)`. Never offer Request-Reply (Direct) for a request that must be persisted, never invent a guaranteed request-reply leaf, and never record `Request-Reply (Guaranteed)` in a Python summary.
 
 ## Step 3: Resolve to one of the five leaves
 
 The tree resolves to exactly five leaves. Spell the chosen leaf in the summary exactly as written here; these strings are the contract Implement mode reads.
 
-- **Request-Reply (Direct)**. Request-reply over direct messaging.
-- **Direct Pub/Sub**. Publish/subscribe over direct messaging, fire-and-forget.
+- **Request-Reply (Direct)** GENERATED. Request-reply over direct messaging.
+- **Direct Pub/Sub** GENERATED. Publish/subscribe over direct messaging, fire-and-forget.
 - **Guaranteed Pub/Sub (single service, exclusive)** GENERATED. One durable queue, exclusive access, one active consumer at a time.
 - **Guaranteed Pub/Sub (single service, non-exclusive)** GENERATED. One durable queue, non-exclusive access, competing workers share the load.
 - **Guaranteed Pub/Sub (fan-out)** SNIPPET. One durable queue plus a topic subscription per independent consuming service. Implement mode reuses the single-service guaranteed generator, so there is no dedicated fan-out sample; the leaf is realized by repeating the single-service queue-and-subscription setup once per consuming service.
-
-The two direct leaves are valid designs, and Design mode confirms and saves them like any other leaf, but Implement mode does not generate them in this release (see `implement-mode.md` Step 4). When the confirmed leaf is one of them, say so in the Step 4 close-out instead of offering to move into Implement mode.
 
 Inside the guaranteed publish/subscribe single-service leaf, the exclusive versus non-exclusive choice is realized as a queue-factory SNIPPET, not a separate sample: the same generated app builds an exclusive or a non-exclusive durable queue based on the developer's answer to question 4.
 
@@ -104,5 +103,3 @@ Field semantics:
 - **Grounding docs.** ONLY the pages this session actually WebFetched. Never list a page you did not fetch. Write `none fetched` when no page was fetched.
 
 After presenting the summary in chat, close Design mode explicitly so the developer knows exactly what happens next; do NOT just display the summary and stop. On the fully-specified path (Step 1) this close-out is the ONLY confirm of the run; it carries the leaf confirmation too. If the design is a variant of its leaf, state the deviation and its rationale in one line here too. Ask them directly, in one step, both whether they are happy with this design AND whether to save it to `solace-design.md` in their project (for example: "Happy with this design? If so, I can save it to `solace-design.md` and move into Implement mode to generate the runnable Python project."). Write the file only on their OK; never write it unprompted. Once they confirm, state the next step plainly: the work moves into Implement mode, which generates the runnable Python project from this summary. Implement mode treats this summary, whether it lives in the chat or in the saved `solace-design.md`, as its input contract. Implement mode OPENS with its own Step 0 door question (Quickstart, Solace Suggested, or Custom), asked before any broker details are requested or accepted; an existing `config.json` or a running broker does not answer it, so ask it on the way in.
-
-For a direct leaf (Direct Pub/Sub or Request-Reply (Direct)), the close-out differs: offer to save the summary to `solace-design.md`, and say in one line that generating a Python project for this leaf is not yet available in this release, so the saved design is ready for when it is. Do not offer to move into Implement mode, do not generate code from the direct samples by hand, and do not offer to write the code another way (from scratch, "outside the generator", or as unverified code). When the developer asks for the code anyway, repeat that generation for this leaf is not yet available and point them at the [Python tutorials](https://tutorials.solace.dev/python/); write no code.

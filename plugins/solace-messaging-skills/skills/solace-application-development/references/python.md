@@ -68,7 +68,12 @@ Live exceptions (these have no `docs.solace.com` `.md` form; use the live URL di
 - `python/design-mode.md`: choose and confirm the messaging pattern and topology before any code is generated; every new build without a design contract routes here first.
 - `python/implement-mode.md`: generate a runnable Python project from a confirmed design; its Step 4 dispatches onto the per-leaf wiring files below.
 - `python/implement-guaranteed-pubsub.md`: the Guaranteed Pub/Sub leaf wiring (read from implement-mode Step 4).
+- `python/implement-direct-pubsub.md`: the Direct Pub/Sub leaf wiring (read from implement-mode Step 4).
+- `python/implement-request-reply.md`: the Request-Reply (Direct) leaf wiring (read from implement-mode Step 4).
+- `python/solace-suggested-mode.md`: the leaf-agnostic Solace Suggested overlay (TLS secure session with the developer's trust store, DMQ eligibility on persistent publishes, HA failover, separate Python projects) reached from implement-mode Step 0 on the Solace Suggested path.
+- `python/custom-mode.md`: the thin a la carte Custom overlay reached from implement-mode Step 0 on the Custom path; a leaf-aware checklist of the hardening knobs (secure session, DMQ, HA, decoupled projects, admin-provisioned queue) that generates exactly the ticked subset, reusing the Solace Suggested overlay steps for the mapped knobs.
 - `python/python-guaranteed-publisher-sample.py`: best-practices publisher sample (basic-auth connect, PERSISTENT publish to a topic, publish receipt handling, graceful shutdown).
 - `python/python-guaranteed-subscriber-sample.py`: best-practices receiver sample (provisions a durable queue plus a topic subscription, CLIENT-ack receiver).
 - `python/python-solace-connection-config.py`: the shared connection-config helper every generated app uses.
-- `python/python-direct-*-sample.py`: the direct pub/sub and direct request-reply samples. Implement mode does not generate those leaves yet (see `python/implement-mode.md` Step 4).
+- `python/python-direct-publisher-sample.py` and `python/python-direct-subscriber-sample.py`: the direct pub/sub samples (bounded-buffer publish with a publish failure listener; direct topic subscription with discard detection).
+- `python/python-direct-requestor-blocking-sample.py`, `python/python-direct-requestor-sample.py`, and `python/python-direct-replier-sample.py`: the direct request-reply samples (blocking and non-blocking requestor; replier answering with `replier.reply()`).
