@@ -6,7 +6,7 @@ Implement mode is NOT only for the canonical shape. A web app, a dashboard, a se
 
 Work through the steps in order. Read this file's grounding links only as each step needs them. Link the canonical doc and state the decision in one line, never paraphrase doc content. Resolve every dependency version at generation time; pin nothing in skill content (SKILL.md Invariant 3).
 
-**Coverage in this release.** Implement mode generates all five Python leaves on all three doors. The Python API does not bundle a verify script yet, so every run ends in the compile-only fallback of Step 5.
+**Coverage in this release.** Implement mode generates all five Python leaves on all three doors and verifies them with the bundled `scripts/verify.sh` (Step 5).
 
 ## Generation outputs: the file contract
 
@@ -16,8 +16,9 @@ Every Implement run writes ALL of these as generation output, on every app shape
 2. `requirements.txt` with the `solace-pubsubplus` version resolved per Step 3.
 3. `config.example.json` (placeholders) and a `.gitignore` that ignores `config.json` and the virtual environment (Step 4).
 4. A tailored `solace-verification-checklist.md` at each project root (tailoring rules in Step 6; the WRITE happens here at generation time, like the scripts).
+5. A copy of the bundled Python `scripts/verify.sh` at each project root, plus a generated `verify-hooks.sh` beside it (Step 5), so the verification commands resolve from inside the project.
 
-There is no `verify.sh` and no `verify-hooks.sh` in a Python project yet. Do not copy the JCSMP `verify.sh` into a Python project: it drives Maven and cannot run Python scripts.
+Copy the Python `verify.sh` from `references/python/scripts/`, never the JCSMP one: the JCSMP script drives Maven and cannot run Python scripts.
 
 ## Step 0: Ask Quickstart, Solace Suggested, or Custom, before any broker details
 
@@ -93,7 +94,7 @@ Generation is keyed on the `Pattern` leaf read in Step 2. Read ONLY the leaf fil
 
 **Every leaf also generates the shared connection helper.** Read `python-solace-connection-config.py` and generate it as `solace_connection_config.py` (a module name needs underscores). Each script builds its connection dict by calling `load_service_properties(args, APP_NAME)` from that module and passes it to `MessagingService.builder().from_properties(...)`, rather than setting the host, VPN, username, or password inline.
 
-**Fixed file names.** Generate each script under the name its sample's docstring gives, next to `solace_connection_config.py`: `guaranteed_publisher.py` and `guaranteed_subscriber.py` (the fan-out leaf adds one subscriber script per further consuming service, named in `implement-guaranteed-pubsub.md`), `direct_publisher.py` and `direct_subscriber.py`, and `direct_replier.py` with `direct_requestor_blocking.py` (or `direct_requestor.py` on the non-blocking variant). The run commands in Step 5 and the checklist address these names; the names of functions, constants, and the `APP_NAME` value inside each script stay your discretion.
+**Fixed file names.** Generate each script under the name its sample's docstring gives, next to `solace_connection_config.py`: `guaranteed_publisher.py` and `guaranteed_subscriber.py` (the fan-out leaf adds one subscriber script per further consuming service, named in `implement-guaranteed-pubsub.md`), `direct_publisher.py` and `direct_subscriber.py`, and `direct_replier.py` with `direct_requestor_blocking.py` (or `direct_requestor.py` on the non-blocking variant). `verify.sh` (Step 5) finds the scripts by these names; the names of functions, constants, and the `APP_NAME` value inside each script stay your discretion.
 
 **Disclaimer header on EVERY generated source file.** Stamp the top of each generated `.py` file with these two comment lines, before the module docstring and before any import:
 
@@ -104,9 +105,9 @@ Generation is keyed on the `Pattern` leaf read in Step 2. Read ONLY the leaf fil
 
 Stamp the header AT WRITE TIME, as the first content of each new file. `requirements.txt`, `config.example.json`, and `.gitignore` are not source and carry no header. The reference samples themselves carry NO disclaimer. This rule is SKILL.md Invariant 4.
 
-**Embedded and web-app shapes.** When the Python messaging layer sits inside a larger application, the chosen leaf's wiring still governs the messaging layer: the same connection helper, the same service, receiver, and publisher listeners, the same `VERIFY:` markers emitted through a stdout-reaching `trace(...)`, and the disclaimer header on every generated file, messaging or not. The `VERIFY:` markers are NOT demo harness.
+**Embedded and web-app shapes.** When the Python messaging layer sits inside a larger application, the chosen leaf's wiring still governs the messaging layer: the same connection helper, the same service, receiver, and publisher listeners, the same `VERIFY:` markers emitted through a stdout-reaching `trace(...)`, and the disclaimer header on every generated file, messaging or not. The `VERIFY:` markers are NOT demo harness; they stay in the messaging layer whatever the shape, because the `app` verify stage (Step 5) greps for them in the app's captured output.
 
-**Write the verification artifacts in this same step.** Alongside the scripts, write the tailored `solace-verification-checklist.md` at each project root (Step 6), `config.example.json`, and `.gitignore`. A session that ends early still leaves the checklist in the project.
+**Write the verification artifacts in this same step.** Alongside the scripts, write the tailored `solace-verification-checklist.md` at each project root (Step 6), `config.example.json`, `.gitignore`, a copy of the bundled `scripts/verify.sh` at each project root, and the generated `verify-hooks.sh` (Step 5 defines its contract). A session that ends early still leaves the checklist and the verify entry points in the project. Make the `verify.sh` copy with a read-and-redirect, `cat "<skill directory>/references/python/scripts/verify.sh" > verify.sh && chmod +x verify.sh`, where the skill directory is the one announced when this skill loaded. Do not use `cp` on the bundled file: Claude Code protects the plugin directory and blocks a `cp` that names a file inside it, and a blocked copy pushes the script through a retype that must stay byte-identical. Never edit the bundled script itself.
 
 ### Concurrency: threads, not asyncio, and no multiprocessing
 
@@ -153,13 +154,19 @@ Generate two small project files next to the scripts (on Solace Suggested, on Cu
 
 Tell the developer they opt in to the config file by copying `config.example.json` to `config.json` and filling in their real broker values. Both scripts then read it from the working directory, so they run from the project root.
 
-## Step 5: Check the project, then hand back the run commands
+## Step 5: Check the project, then verify with verify.sh
 
-The Python API does not bundle a verify script yet, so Implement mode ends in the compile-only fallback on every run, whatever the contents of `config.json` (SKILL.md Invariant 5). Never fabricate a run result and never call a check below a verified round trip.
+Verification is a `verify.sh` run, on every door and every app shape. Step 4 copied `scripts/verify.sh` into each project root and generated `verify-hooks.sh` beside it, so every command below resolves from inside the project. An improvised check (curl against the app's own HTTP API, a manual browser click) may TRIGGER traffic, but it NEVER renders the verdict: the verdict is the `VERIFY:` markers plus the script's exit code, which is what separates "your code is broken" (exit 1) from "your broker, credentials, or trust store are wrong" (exit 2). Never fabricate a run result.
+
+**Live-broker heads-up (every run, every launcher).** Immediately before starting ANY process that will connect to a live broker (a `verify.sh` stage, a `.venv/bin/python` run, a launcher script), print ONE line that names the broker host and states the actual broker-side effects of this run: the durable queues the subscribers provision, the connections it opens, and the messages or requests the foreground role sends, scaled to the generated scripts (SKILL.md Invariant 6).
+
+### Check first: compile, import, and conformance
+
+Run these checks on every run, before any `verify.sh` stage. On the compile-only fallback below they are the whole check.
 
 1. **Compile check.** Run `.venv/bin/python -m py_compile` on every generated `.py` file. A failure is a code failure: fix it and re-run, up to 3 attempts, then report the evidence and hand the decision to the developer.
 2. **Import smoke.** From the project root, run `.venv/bin/python -c "import solace_connection_config, guaranteed_publisher, guaranteed_subscriber"` with the module names of the chosen leaf (for example `direct_publisher, direct_subscriber` or `direct_replier, direct_requestor_blocking`), adding every further generated module (for example each fan-out subscriber). On separate projects, run the checks in each project root against that project's modules. Each script keeps its `if __name__ == "__main__":` guard, so the import resolves every `solace.messaging` name the scripts use without connecting to a broker. A failure (for example an `ImportError` on a misspelled module path) is a code failure under the same fix loop.
-3. **Conformance checks.** From the project root, run these three checks and record each result in the checklist. A missing header or a missing checklist is a code failure under the same fix loop; a version mismatch is reported to the developer, not fixed silently.
+3. **Conformance checks.** From the project root, run these three checks and record each result in the checklist. A missing header or a missing checklist is a code failure under the same fix loop; a version mismatch is reported to the developer, not fixed silently. The `verify.sh` preflight repeats them as warnings on every run.
 
    ```bash
    # every generated .py file starts with the disclaimer header
@@ -170,36 +177,69 @@ The Python API does not bundle a verify script yet, so Implement mode ends in th
    grep -qxF "solace-pubsubplus==$(curl -s https://pypi.org/pypi/solace-pubsubplus/json | python3 -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])')" requirements.txt || echo "VERSION DRIFT"
    ```
 
-4. **Report and hand back.** Report the compile, import, and conformance results, then hand the developer the exact commands to run against their own broker from the project root. The long-running role always starts first: the subscriber, so the durable queue (guaranteed) or the topic subscription (direct) exists before the first publish, and the replier, so the request topic subscription exists before the first request. For the Guaranteed Pub/Sub leaves:
+### The canonical two-script shape: the fixed stages
 
-   ```
-   # terminal 1: provisions the queue, binds, and waits (Ctrl-C stops it)
-   .venv/bin/python guaranteed_subscriber.py [<host:port> <vpn> <user> [password]]
-   # terminal 2: publishes, waits for the broker's acknowledgement, and exits
-   .venv/bin/python guaranteed_publisher.py [<host:port> <vpn> <user> [password]]
-   ```
+`verify.sh` checks every script with `py_compile`, starts the long-running role FIRST with the project's own `.venv` interpreter (the subscriber, so the durable queue or the topic subscription exists before the first publish; the replier, so the request topic subscription exists before the first request), waits for its readiness marker, runs the foreground role and lets it exit on its own, watches each process's own output for the stage's `VERIFY:` marker, sends SIGINT to the long-running role to exercise its graceful shutdown, and returns an exit code that classifies the outcome. It finds the scripts by the fixed file names of Step 4, so never rename a generated script.
 
-   For the Direct Pub/Sub leaf, the same two terminals run `direct_subscriber.py` (subscribes and waits; Ctrl-C stops it), then `direct_publisher.py` (publishes a short burst and exits). For the Request-Reply (Direct) leaf, they run `direct_replier.py` (subscribes to the request topic and waits; Ctrl-C stops it), then `direct_requestor_blocking.py` or `direct_requestor.py` (sends, waits for the reply, and exits).
+| `Pattern` leaf | Stages, in order | Each stage waits for |
+|----------------|------------------|----------------------|
+| The three Guaranteed Pub/Sub leaves | `consumer`, then `publisher`, then `roundtrip` | `VERIFY: QUEUE_BOUND` in the subscriber output; `VERIFY: PUBLISH_ACKED` in the publisher output (this stage starts the subscriber first, so it needs both scripts); `VERIFY: MESSAGE_RECEIVED` in the subscriber output |
+| `Direct Pub/Sub` | `direct` | `VERIFY: SUBSCRIBED` in the subscriber output as the readiness gate, then at least one `VERIFY: MESSAGE_RECEIVED` from the publisher's short burst |
+| `Request-Reply (Direct)` | `direct-request-reply` | `VERIFY: SUBSCRIBED` in the replier output as the readiness gate, then `VERIFY: REPLY_RECEIVED` in the requestor output and `VERIFY: REQUEST_RECEIVED` in the replier output |
 
-   On the fan-out leaf, hand back one subscriber command per subscriber script (`guaranteed_subscriber.py` and each `guaranteed_subscriber_<service>.py`), each in its own terminal and all started before the publisher; every subscriber prints its own markers. On separate projects (Solace Suggested, or the Custom decoupled-projects knob), hand back each command from its own project directory with that project's `.venv/bin/python`.
+The `direct-request-reply` stage runs `direct_requestor_blocking.py`, or `direct_requestor.py` when the project has the non-blocking variant instead. The Python API has no guaranteed request-reply, so there is no `guaranteed-request-reply` stage. On the fan-out leaf, the stages drive `guaranteed_subscriber.py` only; hand back one command per further subscriber script (`guaranteed_subscriber_<service>.py`), each started in its own terminal before the publisher, and tell the developer that each prints its own `VERIFY: MESSAGE_RECEIVED`.
 
-   The arguments are needed only when there is no `config.json`, and they are never offered on a path that drops the command-line fallback. Tell the developer what a passing run prints, per leaf:
+Invoke each stage from the project root in one of these forms:
 
-   - Guaranteed Pub/Sub: the subscriber prints `VERIFY: CONNECTED` and then `VERIFY: QUEUE_BOUND`; the publisher prints `VERIFY: CONNECTED` and `VERIFY: PUBLISH_ACKED` and exits with status 0; the subscriber then prints `VERIFY: MESSAGE_RECEIVED`.
-   - Direct Pub/Sub: the subscriber prints `VERIFY: CONNECTED` and then `VERIFY: SUBSCRIBED`; the publisher prints `VERIFY: CONNECTED` and exits with status 0; the subscriber then prints `VERIFY: MESSAGE_RECEIVED`.
-   - Request-Reply (Direct): the replier prints `VERIFY: CONNECTED` and then `VERIFY: SUBSCRIBED`; the requestor prints `VERIFY: CONNECTED`; the replier prints `VERIFY: REQUEST_RECEIVED`; the requestor prints `VERIFY: REPLY_RECEIVED` and exits with status 0.
+- **With `config.json`** (always the form for a `tcps://` host, because the trust store path has no argument form): `./verify.sh <stage>`. Each script reads `config.json` from the working directory.
+- **With connection arguments** (a plaintext host and no `config.json`): `./verify.sh <stage> <host:port> <vpn> <user> [password]`, the same contract the scripts' command-line fallback uses.
+- **On separate projects** (Solace Suggested, or the Custom decoupled-projects knob): `./verify.sh <stage> --subscriber-dir <subscriber-project> --publisher-dir <publisher-project>` on the pub/sub leaves, or `./verify.sh direct-request-reply --replier-dir <replier-project> --requestor-dir <requestor-project>`. Run it from either project; the directories are relative to the working directory. It passes NO connection details on the command line: each script runs from inside its own project and reads that project's `config.json`, with that project's `.venv`.
 
-   On every leaf, Ctrl-C on the long-running role prints `Shutdown signal received` and it exits with status 0.
+### Every other shape: the `app` stage and `verify-hooks.sh`
 
-**When the developer asks you to run it.** If the developer explicitly asks you to run the scripts against their broker, print the live-broker heads-up first (SKILL.md Invariant 6: name the host, every durable queue the subscribers provision, one connection per script, and the messages or requests the foreground role sends, scaled to the generated scripts). Then start each long-running role in the background with its output captured, wait for its readiness marker (`VERIFY: QUEUE_BOUND` on the guaranteed leaves, `VERIFY: SUBSCRIBED` on the direct leaves) from each, run the foreground role, wait for the pass marker (`VERIFY: MESSAGE_RECEIVED` in each subscriber's output, or `VERIFY: REPLY_RECEIVED` in the requestor's output), and stop the long-running roles with SIGINT. Report the markers you observed as evidence of a manual run. It is not a verify verdict: record it in the checklist as a manual run, and never describe it as a passed verify stage.
+A web app, an embedded service, or any single-process shape that the fixed stages cannot drive is verified with the `app` stage: `./verify.sh app`. The stage sources the generated `verify-hooks.sh`, which carries the ONLY app-specific facts (how to start the app and how to cause one publish), while the script keeps the universal logic: marker watching, timeouts, environment-signature classification, and the 0/1/2 exit contract. Generation writes `verify-hooks.sh` because the generator just wrote the app and knows both commands:
 
-**Environment failure on a manual run: do NOT modify the code.** When the captured output shows that the broker is unreachable, the credentials or VPN are wrong, the TLS handshake or the trust store fails, or the client may not create the queue (the subscriber's `Could not bind to queue` error), the code is not the problem. Report the matched output line as evidence and STOP: do not enter the fix loop, and do not change the code. The fix is the developer's broker, credentials, or client permissions. Fix the code only when the output shows a code failure (an exception from the scripts' own logic, or a marker that never appears after a clean connect and bind), up to 3 attempts, then hand the decision to the developer.
+```bash
+# verify-hooks.sh: generated with the project; verify.sh's app stage sources it.
+START_CMD='.venv/bin/python app.py'                                        # starts the app (long-running)
+TRIGGER_CMD='curl -s --max-time 10 -X POST localhost:8081/api/orders -d "{\"demo\":1}"'  # causes exactly one publish
+READY_MARKER='VERIFY: QUEUE_BOUND'          # marker proving the consuming side is live
+PASS_MARKER='VERIFY: MESSAGE_RECEIVED'      # marker proving the round trip
+```
 
-**Close every run with the next steps, stated plainly.** Tell the developer, in order: (1) copy `config.example.json` to `config.json` and fill in their real broker values; on any `tcps://` host (always on Solace Suggested and with the Custom secure-session knob, and on Quickstart or on Custom with the secure-session knob unticked when the Step 1 answer was secure), also put the broker's CA certificate into a trust store directory and set `solace.messaging.tls.trust-store-path` to it, as `solace-suggested-mode.md` Step 1 explains. On a Quickstart run, or a Custom run with the secure-session knob unticked, whose Step 1 answer was plaintext, still add one line: if the host later changes to `tcps://`, the project needs a trust store directory set in `solace.messaging.tls.trust-store-path` in `config.json`, or the connection fails with "Failed to load trust store"; (2) run the long-running role, then the foreground role, with the commands above, and check the markers. Step 4 already wrote the tailored `solace-verification-checklist.md`; invite the developer to add their own items in its Your additional items section and to record any skill-undelivered concerns under Developer-owned items.
+Generate `verify-hooks.sh` with ONLY these four assignments. The app stage imports exactly these four names from a child shell and ignores everything else in the file; keep the file to the four lines all the same. Give a network trigger its own timeout (the `--max-time` above): the stage also bounds the trigger and force-kills one that never returns, but a self-timing trigger leaves cleaner evidence. Set `READY_MARKER` and `PASS_MARKER` to the chosen leaf's own markers. On the canonical two-script shape, generate `verify-hooks.sh` too, carrying the classic commands (for example `START_CMD='.venv/bin/python guaranteed_subscriber.py'` and `TRIGGER_CMD='.venv/bin/python guaranteed_publisher.py'`), so the file documents the same contract everywhere; the fixed stages do not read it.
+
+The `app` stage starts `START_CMD` in the background, waits for `READY_MARKER` in the app's captured output, runs `TRIGGER_CMD` under a bounded deadline, waits for `PASS_MARKER`, then stops the app with SIGINT and classifies. A curl inside `TRIGGER_CMD` is exactly the right use of curl: it triggers, and the markers judge.
+
+### Interpret the exit code
+
+- **Exit 0 (stage passes).** The stage milestone appeared, the long-running role printed `Shutdown signal received`, and it exited with status 0. Advance to the next stage.
+- **Exit 1 (code failure).** `py_compile` failed, a marker never appeared, a process died before its milestone, the shutdown line did not print, or a run hung and had to be force-killed. Enter the bounded fix loop below.
+- **Exit 2 (environment failure).** A Solace Python API connection, authentication, or TLS signature appeared (the broker is unreachable, the credentials or VPN are wrong, or the trust store is missing or holds the wrong CA), or the subscriber could not bind its queue because the client may not create it (`Could not bind to queue`). STOP. Do NOT enter the fix loop. The code is not the problem.
+
+**Bounded fix loop (exit 1 only).** Diagnose the captured output, fix the code, and re-run the same stage, up to 3 automatic attempts per stage. After the third failure, stop fixing: summarize exactly what you tried and what the captured output shows, then hand the decision to the developer. Fixes apply without a confirmation gate, on every door.
+
+**Environment-failure path (exit 2).** Report the matched line from the captured output as evidence, and do NOT modify the code. The fix is the developer's broker, credentials, trust store, or client permissions.
+
+### When to run verify.sh, and when to hand it back
+
+**Run it from `config.json` with real values.** Run the stages for real, with NO confirmation prompt, ONLY when a `config.json` is present at every project root involved AND its values are real, meaning they are NOT the `config.example.json` placeholders (`tcp://HOST:55555` or `tcps://HOST:55443`, `YOUR_VPN`, `YOUR_USERNAME`, `YOUR_PASSWORD`, `PATH_TO_TRUST_STORE_DIRECTORY`). Filling in real values is the opt-in; a `config.json` that still carries a placeholder is not. Use the `config.json` form of the stage command (single project) or the separate-projects form, and run the leaf's stages in the table's order. Print the live-broker heads-up immediately before the run, naming the host from `config.json`; the real-values `config.json` is the consent, the heads-up is not a prompt. The developer can also ask you to run `verify.sh` with connection arguments they give for a plaintext host.
+
+**Honesty rule (no fabricated runs).** When `config.json` is absent or still holds placeholders, do NOT run the scripts and do NOT fabricate a result. Report the compile, import, and conformance results, and hand back the exact `verify.sh` commands for the developer to run from the project root, for example on the Guaranteed Pub/Sub leaves:
+
+```
+./verify.sh consumer
+./verify.sh publisher
+./verify.sh roundtrip
+```
+
+Add the connection arguments only for a plaintext host with no `config.json`, and never on a path that drops the command-line fallback. On separate projects, hand back the separate-projects form. For an `app`-stage shape, the handed-back command is `./verify.sh app` after the developer fills in the app's config.
+
+**Close every run with the next steps, stated plainly.** Tell the developer, in order: (1) copy `config.example.json` to `config.json` (in each project on separate projects) and fill in their real broker values; on any `tcps://` host (always on Solace Suggested and with the Custom secure-session knob, and on Quickstart or on Custom with the secure-session knob unticked when the Step 1 answer was secure), also put the broker's CA certificate into a trust store directory and set `solace.messaging.tls.trust-store-path` to it, as `solace-suggested-mode.md` Step 1 explains. On a Quickstart run, or a Custom run with the secure-session knob unticked, whose Step 1 answer was plaintext, still add one line: if the host later changes to `tcps://`, the project needs a trust store directory set in `solace.messaging.tls.trust-store-path` in `config.json`, or the connection fails with "Failed to load trust store"; (2) then just ask you to verify, and you will run `verify.sh` for them against their broker (naming the host and side effects first). Make the fill-in-`config.json`-then-ask-me path the recommended one; if they would rather run it themselves, point them at the handed-back commands. Step 4 already wrote the tailored `solace-verification-checklist.md`; invite the developer to add their own items in its Your additional items section and to record any skill-undelivered concerns under Developer-owned items.
 
 ### Traps to avoid
 
-- **Improvised verdicts.** A connect that does not raise, or a publish call that returns, proves nothing about the round trip. Judge only by the markers in each script's output.
+- **Improvised verdicts.** A connect that does not raise, a publish call that returns, or a curl against the app's own API proves nothing about the round trip. Trigger with whatever fits; judge ONLY by the markers and the `verify.sh` exit code.
 - **Publishing direct-to-queue instead of pub/sub.** Publish to a topic; let the durable queue carry a topic subscription. See [Creating Queues with the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Create-Queues.md).
 - **DIRECT delivery where Guaranteed is required.** Use the persistent publisher for the guaranteed pub/sub journey. See [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md).
 - **Seconds instead of milliseconds.** `RetryStrategy.parametrized_retry(retries, retry_interval)` takes its interval in MILLISECONDS per the API reference; a value of `3` means 3 milliseconds. The sample code on the Messaging Service page comments `parametrized_retry(20, 3)` as "over an interval of 3 seconds"; that comment is wrong, and the API reference wins. Whenever a generated script sets a retry interval, write it in milliseconds, as the samples' named constants do.
@@ -207,66 +247,14 @@ The Python API does not bundle a verify script yet, so Implement mode ends in th
 - **Hardcoded versions.** Resolve the `solace-pubsubplus` version at generation time (Step 3); never carry a version from memory, from an old `requirements.txt`, or from the upstream samples repository.
 - **Wildcard imports.** Keep every import explicit, as the samples do; never write `from solace.messaging... import *`.
 - **The system interpreter.** Run and check everything with `.venv/bin/python`, so the project uses the version it installed.
-- **Running the publisher before the subscriber has provisioned the queue.** A persistent message published before the queue subscribes to its topic is dropped and never received. By default the broker still ACKs it, so the publisher can print `VERIFY: PUBLISH_ACKED` for a message no subscriber gets; the publisher sees a NACK only when the client profile rejects messages that match no subscription. Judge the round trip by `VERIFY: MESSAGE_RECEIVED` in the subscriber output, never by `PUBLISH_ACKED` alone. Run the subscriber first.
+- **Running the publisher before the subscriber has provisioned the queue.** A persistent message published before the queue subscribes to its topic is dropped and never received. By default the broker still ACKs it, so the publisher can print `VERIFY: PUBLISH_ACKED` for a message no subscriber gets; the publisher sees a NACK only when the client profile rejects messages that match no subscription. Judge the round trip by `VERIFY: MESSAGE_RECEIVED` in the subscriber output, never by `PUBLISH_ACKED` alone. Run the subscriber first; `verify.sh` enforces that order.
 - **Treating a sample as a spec that overrides the approved design.** See "Adapting a sample to a variant of its leaf" above.
 
 ## Step 6: Tailor the checklist (written at Step 4) and report
 
-Step 4 writes the tailored `solace-verification-checklist.md` into the generated project as generation output; this step defines its content and adds the report in chat. The Python API has no master checklist template yet; until it lands, write the file from the list below. Resolve each item for the generated code: keep only the items for the chosen leaf (a leaf in parentheses marks a leaf-specific item), and move an item the generation did not deliver to Your responsibility. On Solace Suggested, and for each ticked Custom knob, an item under Your responsibility that the door or the knob delivered (the TLS secure session, DMQ eligibility on published messages, separate projects, and the HA reconnect values only when the HA-failover question was answered yes) moves to Delivered by this generation. The broker-side dead message queue always stays under Your responsibility, because the skill never provisions it. Write it as a Markdown task list (`- [ ]`), ticking only what this run actually checked. Each item in the first two groups carries one canonical doc link, as the master JCSMP template does; the round-trip and conformance items carry none because they check skill conformance, not Solace guidance.
+Step 4 writes the tailored `solace-verification-checklist.md` into the generated project as generation output; this step defines its tailoring and adds the report in chat. Read `verification-checklist.md` (the master template) and resolve each item for the generated code: keep only the items for the chosen leaf (a leaf in parentheses marks a leaf-specific item), and move an item the generation did not deliver to Your responsibility. On Solace Suggested, and for each ticked Custom knob, an item under Your responsibility that the door or the knob delivered (the TLS secure session, DMQ eligibility on published messages, separate projects, and the HA reconnect values only when the HA-failover question was answered yes) moves to Delivered by this generation. The broker-side dead message queue always stays under Your responsibility, because the skill never provisions it. Write it as a Markdown task list (`- [ ]`), ticking only what this run actually checked. Keep the master template's groups and doc links, drop its template introduction and the leaf names in parentheses from the emitted copy, and keep its two closing sections (Developer-owned items, where a consented deviation is recorded, and Your additional items). On separate projects, write ONE copy into EACH project root.
 
-**Delivered by this generation**
-
-- Basic-auth connection through the shared `solace_connection_config.py` helper; credentials live only in a gitignored `config.json`. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md)
-- Service reconnection and interruption listeners registered before `connect()`. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md)
-- (Guaranteed Pub/Sub) Persistent publish to a topic with a publish receipt listener; a NACK is logged with the message id. [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md)
-- (Guaranteed Pub/Sub) Capacity-bounded back pressure on the publisher (`on_back_pressure_wait`). [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md)
-- (Guaranteed Pub/Sub) Message time-to-live set once on the publisher's message template. [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md)
-- (Guaranteed Pub/Sub) Durable queue plus topic subscription provisioned at start (`CREATE_ON_START`), with the access type from the design summary (one durable queue per consuming service on fan-out); with the Custom admin-provisioned-queue knob, the subscriber binds the administrator's queue instead. [Creating Queues with the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Create-Queues.md)
-- (Guaranteed Pub/Sub) Client acknowledgement only after processing. [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Receive.md)
-- (Direct Pub/Sub) Direct publish to a topic with a publish failure listener and capacity-bounded back pressure (`on_back_pressure_wait`). [Publishing Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-DM-Publish.md)
-- (Direct Pub/Sub) Direct topic subscription with capacity-bounded back pressure (`on_back_pressure_drop_latest`) and discard detection on received messages. [Consuming Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-DM-Receive.md)
-- (Request-Reply (Direct)) Requests sent through a `RequestReplyMessagePublisher` with a positive reply timeout, and a replier that answers with `replier.reply()` and ignores a message with no reply-to. [Request-Reply Messaging in the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Request-Reply.md)
-- Graceful SIGINT/SIGTERM shutdown: `terminate(grace_period)` and then `disconnect()` on every exit path. [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Receive.md)
-
-**Your responsibility (not delivered here)**
-
-- TLS secure session (`tcps://` with certificate validation set explicitly in code). Quickstart, and Custom with the secure-session knob unticked, open a TLS session only when the host is `tcps://`, and then validate only through the API defaults, which a `config.json` key can turn off; neither sets the certificate checks in code. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md)
-- (Any `tcps://` host: Solace Suggested, the Custom secure-session knob, or Quickstart or Custom without that knob with a `tcps://` host) A trust store directory that holds the broker's CA certificate as a PEM file, named by `solace.messaging.tls.trust-store-path` in `config.json`; the Python API has no default trust store, so the connection fails without it. [Using Client Certificates with Solace Cloud](https://docs.solace.com/Cloud/ght_client_certs.md)
-- (Custom admin-provisioned-queue knob) The queue and its topic subscription provisioned on the broker by an administrator, with the access type the design summary records. [Creating Queues with the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Create-Queues.md)
-- Credentials handled safely: `config.json` is never committed, and credentials are not passed as command-line arguments, where they land in shell history and process listings (the handed-back run commands accept them only for convenience). [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md)
-- Authentication stronger than basic username/password (for example a client certificate or Kerberos) where the environment requires it; this journey generates basic username/password only. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md)
-- (Guaranteed Pub/Sub) Dead message queue eligibility (`PERSISTENT_DMQ_ELIGIBLE`) set explicitly on published messages. [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-PM-Publish.md)
-- (Guaranteed Pub/Sub) A dead message queue provisioned on the broker with a max-redelivery count or a time-to-live; the eligibility flag alone does nothing without it. [Configuring Dead Message Queues](https://docs.solace.com/Messaging/Guaranteed-Msg/Setting-Dead-Msg-Queues.md)
-- Reconnect tuning for HA failover; Quickstart leaves connect and reconnect behavior at the API defaults, and Custom without the HA knob keeps the samples' baseline of 20 retries 3000 ms apart. [Solace C API Best Practices](https://docs.solace.com/API/API-Developer-Guide/C-API-Best-Practices.md)
-- Separate projects or deployments per role (skill guidance: a real deployment lifts each script into its own service or project; no Solace doc page states it).
-- (Guaranteed Pub/Sub) `respect-ttl` enabled on the queue, without which the broker ignores the message time-to-live. [Configuring Queues](https://docs.solace.com/Messaging/Guaranteed-Msg/Configuring-Queues.md)
-- (Guaranteed Pub/Sub) An administrator-provisioned queue, or the endpoint-create permission for this client, in production. [Creating Queues with the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Create-Queues.md)
-- A Python version in active or security support and OpenSSL installed on Linux for TLS ([Supported Environments](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-supported-Environments.md)), and no `multiprocessing` in the application ([solace-pubsubplus on PyPI](https://pypi.org/project/solace-pubsubplus/)).
-
-**Verified by the round-trip** (developer-run until the Python verify script lands)
-
-- (Guaranteed Pub/Sub) Every subscriber prints `VERIFY: CONNECTED` and `VERIFY: QUEUE_BOUND`.
-- (Guaranteed Pub/Sub) The publisher prints `VERIFY: CONNECTED` and `VERIFY: PUBLISH_ACKED`, then exits with status 0.
-- (Guaranteed Pub/Sub) Every subscriber prints `VERIFY: MESSAGE_RECEIVED` (`PUBLISH_ACKED` alone does not prove delivery).
-- (Direct Pub/Sub) The subscriber prints `VERIFY: CONNECTED` and `VERIFY: SUBSCRIBED`; the publisher prints `VERIFY: CONNECTED` and exits with status 0; the subscriber then prints `VERIFY: MESSAGE_RECEIVED`.
-- (Request-Reply (Direct)) The replier prints `VERIFY: CONNECTED`, `VERIFY: SUBSCRIBED`, and `VERIFY: REQUEST_RECEIVED`; the requestor prints `VERIFY: CONNECTED` and `VERIFY: REPLY_RECEIVED`, then exits with status 0.
-- Ctrl-C on each long-running role (subscriber or replier) prints `Shutdown signal received` and it exits with status 0.
-
-**Generation conformance**
-
-- The disclaimer header is the first two lines of every generated `.py` file (Step 5 header check).
-- `requirements.txt` pins the `solace-pubsubplus` version that PyPI reported as `info.version` at generation time, or the developer's version when PyPI was unreachable (Step 5 drift check).
-- This tailored checklist exists at the project root (Step 5 checklist check).
-- `py_compile` and the import smoke passed (Step 5), with the result recorded here.
-- Comments follow their code (Step 4).
-- Every page named in the design summary's Grounding docs field was WebFetched in this session (`none fetched` is an honest value; an unfetched citation is not).
-- Verification: record `verify script not yet bundled for Python; round trip handed back`, or `manual run` with the observed markers when the developer asked you to run it.
-
-**Developer-owned items (not delivered by this skill)**: any item the skill does not deliver, recorded as developer-owned rather than skill-satisfied. A consented deviation is recorded here.
-
-**Your additional items**: open space for the developer to keep growing the list.
-
-The emitted checklist is an artifact, not source, so it carries NO disclaimer header. Report the same resolution in chat: what landed under each group, the compile, import, and conformance results, and that the round trip is handed back.
+The emitted checklist is an artifact, not source, so it carries NO disclaimer header. Report the same resolution in chat: what landed under each group and the compile, import, and conformance results. Record each `verify.sh` stage that ran and its exit code in the checklist's Generation conformance group; on the compile-only fallback, record that the run was handed back instead.
 
 ## Grounding references
 

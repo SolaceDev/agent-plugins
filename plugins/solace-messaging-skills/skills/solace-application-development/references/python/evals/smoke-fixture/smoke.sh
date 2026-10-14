@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# Smoke gate for the baked Solace Python samples. Python has no compile step, so the
+# gate installs the latest solace-pubsubplus, runs py_compile on every baked sample,
+# and runs smoke.py, which imports each sample, builds its API objects without a
+# broker, and exercises the shared connection helper. The script's exit code IS the
+# gate: exit 0 only if every check passes.
+#
+# Runnable locally with one command from any working directory. Resolves the
+# solace-pubsubplus version from PyPI at run time, so no version number is committed
+# anywhere (SKILL.md Invariant 3). All work happens in a throwaway temp directory, so
+# the repository tree is left unmodified.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# references/python/ lives two levels up from smoke-fixture/ (evals/ -> python/).
+REFERENCES_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON="${PYTHON:-python3}"
+
+# Sample roster: each baked sample and the name a generated project gives it
+# (implement-mode.md Step 4). A new baked sample is a one-line append here.
+SAMPLES=(
+  "python-solace-connection-config.py:solace_connection_config.py"
+  "python-guaranteed-publisher-sample.py:guaranteed_publisher.py"
+  "python-guaranteed-subscriber-sample.py:guaranteed_subscriber.py"
+  "python-direct-publisher-sample.py:direct_publisher.py"
+  "python-direct-subscriber-sample.py:direct_subscriber.py"
+  "python-direct-requestor-blocking-sample.py:direct_requestor_blocking.py"
+  "python-direct-requestor-sample.py:direct_requestor.py"
+  "python-direct-replier-sample.py:direct_replier.py"
+)
+
+# Existence guard: fail early if any input is missing, including a new roster entry
+# whose sample is not yet committed.
+for entry in "${SAMPLES[@]}"; do
+  src="${REFERENCES_DIR}/${entry%%:*}"
+  [[ -f "$src" ]] || { echo "ERROR: required input not found: $src" >&2; exit 1; }
+done
+for f in "${SCRIPT_DIR}/smoke.py" "${REFERENCES_DIR}/scripts/verify.sh"; do
+  [[ -f "$f" ]] || { echo "ERROR: required input not found: $f" >&2; exit 1; }
+done
+
+# (1) Resolve the latest solace-pubsubplus release from the PyPI JSON API, the same
+#     source implement-mode.md Step 3 uses. On any failure, exit non-zero rather than
+#     guessing a version.
+echo "Resolving the latest solace-pubsubplus version from PyPI..."
+VERSION="$(curl -s --max-time 20 https://pypi.org/pypi/solace-pubsubplus/json \
+  | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null || true)"
+if [[ -z "${VERSION// /}" ]]; then
+  echo "ERROR: could not resolve the latest solace-pubsubplus version from PyPI" >&2
+  echo "       (network failure or unreachable API). Not guessing a version." >&2
+  exit 1
+fi
+echo "Resolved solace-pubsubplus version: ${VERSION}"
+
+# (2) Build a throwaway working tree and virtual environment.
+WORK_DIR="$(mktemp -d)"
+cleanup() { rm -rf "$WORK_DIR"; }
+trap cleanup EXIT
+
+"$PYTHON" -m venv "${WORK_DIR}/.venv"
+VENV_PY="${WORK_DIR}/.venv/bin/python"
+echo "Installing solace-pubsubplus==${VERSION} with $("$VENV_PY" --version)..."
+"$VENV_PY" -m pip install -q --disable-pip-version-check "solace-pubsubplus==${VERSION}"
+
+# (3) Copy the samples under their generated names. Content is verbatim; only the
+#     file name changes, so the samples import each other as a generated project does.
+for entry in "${SAMPLES[@]}"; do
+  cp "${REFERENCES_DIR}/${entry%%:*}" "${WORK_DIR}/${entry##*:}"
+done
+cp "${SCRIPT_DIR}/smoke.py" "${WORK_DIR}/smoke.py"
+
+# (4) py_compile every sample.
+echo "Running py_compile on every baked sample..."
+( cd "$WORK_DIR" && "$VENV_PY" -m py_compile ./*.py )
+echo "PASS: py_compile"
+
+# (5) Import each sample and build its API objects without a broker, then exercise
+#     the connection helper.
+echo "Building the API objects against tcp://localhost:55555 without a broker..."
+( cd "$WORK_DIR" && "$VENV_PY" smoke.py )
+
+# (6) The bundled verify script must at least parse.
+bash -n "${REFERENCES_DIR}/scripts/verify.sh"
+echo "PASS: scripts/verify.sh parses"
+
+echo "PASS: the baked Python samples against solace-pubsubplus ${VERSION}"

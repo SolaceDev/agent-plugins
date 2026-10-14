@@ -28,6 +28,7 @@ claude plugin validate . --strict                # marketplace and plugin manife
 ./tools/check-plugin-versions.sh --sync-only     # marketplace.json matches plugins/
 ./tools/check-links.sh plugins                   # broken and soft-404 doc links
 ./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/compile-fixture/compile.sh   # compile the baked JCSMP samples
+./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/smoke-fixture/smoke.sh     # smoke the baked Python samples (python3 and PyPI access)
 claude --plugin-dir plugins/solace-messaging-skills   # load the plugin from the clone
 ```
 
@@ -47,7 +48,7 @@ The trigger runner has no single-case mode; set `TRIGGER_EVAL_RUNS=1` for a quic
 - Link documentation to the live `docs.solace.com` `.md` URL. Do not copy doc content into a skill. Every link under `plugins/` must pass `check-links.sh`.
 - A new skill needs cases in both `trigger-evals.json` (positive and near-miss negative prompts) and `output-evals.json` (validate the latter against `tools/output-evals.schema.json`).
 - A new, removed, or renamed plugin directory needs the matching `marketplace.json` change in the same pull request.
-- A new baked JCSMP sample must be added to the sample roster in `compile.sh`, or the compile check does not cover it.
+- A new baked JCSMP sample must be added to the sample roster in `compile.sh`, or the compile check does not cover it. A new baked Python sample goes into the roster in `smoke.sh` and the module list in `smoke.py`.
 - Do not put exact counts (of cases, skills, or graders) in READMEs or skill docs. They go stale.
 
 ## Gotchas / do not

@@ -12,7 +12,7 @@ Determine the user's intent and enter the appropriate mode. Routing is keyed on 
 |---|---|---|
 | "Help me choose the Solace messaging pattern for a new Python app" / "Topic or queue?" / "What delivery semantics should I use?" | **Design** | Read `python/design-mode.md` |
 | Build or generate a NEW app or messaging component with NO valid design contract yet ("Build me a Solace Python publisher/consumer", "Generate a Python project with solace-pubsubplus", a web app / dashboard / service, or any embedded shape where the Python messaging layer lives inside a larger application) | **Design first** | Read `python/design-mode.md`. A prompt that already states the design resolves on its fully-specified path in ONE confirm; a bare prompt walks the tree. The confirmed summary then feeds Implement. |
-| A build request WITH a valid design contract (see the design-contract gate below) | **Implement** | Read `python/implement-mode.md` |
+| A build request WITH a valid design contract (see the design-contract gate below) | **Implement** | Read `python/implement-mode.md`; for an embedded shape generate the messaging layer per its leaf rules and verify with the `app` stage of `verify.sh` (its Step 5) |
 | An edit to an EXISTING app that changes the messaging topology (the topology rule below) | **Design first** | Re-enter `python/design-mode.md` to re-confirm the affected summary fields, then Implement applies the change |
 | A mechanical edit to an EXISTING app with no topology change (reconnect handling, payload format, logging, renames, ack tuning) | **Implement** | Read `python/implement-mode.md`; no design pass |
 | "My Python app is throwing on connect" / "Why is my receiver not binding the queue?" | **Debug** | Debug mode is not yet available in this release. Redirect the user to the canonical Solace Python API documentation: [Python API Home](https://docs.solace.com/API/Messaging-APIs/Python-API/python-home.md). The redirect is the ENTIRE debug answer: acknowledge the problem in one line, link the page, and stop. Do not generate debugging guidance from memory. That prohibition covers root-cause hypotheses, likely causes, interim checks or "things worth checking in the meantime", workarounds, and configuration or code suggestions. Restating this rule does not license adding such guidance after the redirect. |
@@ -40,7 +40,7 @@ The package's `requires_python` value on PyPI is an install floor, not a support
 
 ## Verify script
 
-The Python API does not bundle a verify script yet. Every Implement run ends in the compile-only fallback that `python/implement-mode.md` Step 5 defines, and never claims a verified run (SKILL.md Invariant 5).
+The Python API bundles `python/scripts/verify.sh`, a stage-dispatched run-and-observe script (`verify.sh <publisher|consumer|roundtrip|direct|direct-request-reply|app> ...`) that Implement mode copies into every generated project and runs against a reachable broker (`python/implement-mode.md` Step 5). It is a separate script from the JCSMP one: it runs each project's `.venv` interpreter, not Maven. Without real broker values, Implement mode ends in the compile-only fallback of the same step and never claims a verified run (SKILL.md Invariant 5).
 
 ## Canonical doc links
 
@@ -77,3 +77,5 @@ Live exceptions (these have no `docs.solace.com` `.md` form; use the live URL di
 - `python/python-solace-connection-config.py`: the shared connection-config helper every generated app uses.
 - `python/python-direct-publisher-sample.py` and `python/python-direct-subscriber-sample.py`: the direct pub/sub samples (bounded-buffer publish with a publish failure listener; direct topic subscription with discard detection).
 - `python/python-direct-requestor-blocking-sample.py`, `python/python-direct-requestor-sample.py`, and `python/python-direct-replier-sample.py`: the direct request-reply samples (blocking and non-blocking requestor; replier answering with `replier.reply()`).
+- `python/verification-checklist.md`: the master verification checklist template that implement-mode Step 6 tailors into every generated project.
+- `python/scripts/verify.sh`: the bundled verify script that Implement mode copies into every generated project; the `app` stage drives web and embedded shapes through a generated `verify-hooks.sh`.
