@@ -50,6 +50,6 @@ Non-negotiable rules that apply across every API. Apply all.
 ## Reference Files (read on-demand only)
 
 - `references/jcsmp.md`: the JCSMP entry file (mode detection, the JCSMP coordinate, and the live JCSMP doc links); read this for any JCSMP request.
-- `references/jcsmp/`: all JCSMP API content (mode files, the reference samples, the verify script, and the compile fixture), reached through `references/jcsmp.md`.
+- `references/jcsmp/`: all JCSMP API content (mode files, the reference samples, the verify script, and the sample check), reached through `references/jcsmp.md`.
 - `references/python.md`: the Python entry file (mode detection, the `solace-pubsubplus` coordinate, and the live Python doc links); read this for any Solace Python API request.
-- `references/python/`: all Python API content (mode files, the reference samples, the verify script, and the smoke fixture), reached through `references/python.md`.
+- `references/python/`: all Python API content (mode files, the reference samples, the verify script, and the sample check), reached through `references/python.md`.

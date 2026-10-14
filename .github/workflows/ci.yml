@@ -6,8 +6,8 @@ name: ci
 #                  + marketplace.json/plugins/ sync + version bumps on release PRs
 #                  + post-merge version backstop on pushes to main
 #   link-check:    CI-02: the tools/check-links.sh sweep
-#   compile-check: EVAL-02 compile the baked JCSMP samples verbatim
-#   python-smoke-check: install solace-pubsubplus and smoke the baked Python samples
+#   jcsmp-sample-check:  EVAL-02 compile the baked JCSMP samples verbatim
+#   python-sample-check: check the baked Python samples against the latest solace-pubsubplus
 #   trigger-evals: lightweight skill-triggering check; disabled until CI may hold an API key
 on:
   # Deliberately no `edited` type: running on title/body edits either re-runs
@@ -109,7 +109,7 @@ jobs:
 
   # EVAL-02: compile the baked JCSMP samples verbatim against the live-resolved
   # sol-jcsmp. Pure compile gate, no API budget and no credential.
-  compile-check:
+  jcsmp-sample-check:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -119,14 +119,14 @@ jobs:
           distribution: temurin
           java-version: 11
           cache: maven
-      - name: Compile baked samples (EVAL-02 hard gate)
-        run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/compile-fixture/compile.sh
+      - name: Check baked JCSMP samples (EVAL-02 hard gate)
+        run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/sample-check/check-samples.sh
 
-  # Smoke the baked Python samples against the latest solace-pubsubplus from PyPI:
+  # Check the baked Python samples against the latest solace-pubsubplus from PyPI:
   # py_compile, then import each sample and build its API objects against a
   # resolvable host without a broker. Python has no compile step, so this is the
-  # Python counterpart of compile-check. No API budget and no credential.
-  python-smoke-check:
+  # Python counterpart of jcsmp-sample-check. No API budget and no credential.
+  python-sample-check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -134,8 +134,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: 3.x
-      - name: Smoke baked Python samples
-        run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/smoke-fixture/smoke.sh
+      - name: Check baked Python samples
+        run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/sample-check/check-samples.sh
 
   # Lightweight skill-triggering check. For every case in each plugin's
   # evals/trigger-evals.json, run the prompt with only that plugin loaded and

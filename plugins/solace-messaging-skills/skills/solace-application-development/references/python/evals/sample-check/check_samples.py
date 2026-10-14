@@ -1,6 +1,6 @@
-"""Smoke test for the baked Solace Python samples, run by smoke.sh.
+"""Sample check for the baked Solace Python samples, run by check-samples.sh.
 
-smoke.sh copies every sample into the working directory under its generated name and
+check-samples.sh copies every sample into the working directory under its generated name and
 runs this file with the virtual environment's interpreter. Without a broker, it:
 
 1. imports each sample module (each keeps its __main__ guard, so nothing connects),

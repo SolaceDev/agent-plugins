@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Smoke gate for the baked Solace Python samples. Python has no compile step, so the
+# Sample check for the baked Solace Python samples. Python has no compile step, so the
 # gate installs the latest solace-pubsubplus, runs py_compile on every baked sample,
-# and runs smoke.py, which imports each sample, builds its API objects without a
+# and runs check_samples.py, which imports each sample, builds its API objects without a
 # broker, and exercises the shared connection helper. The script's exit code IS the
 # gate: exit 0 only if every check passes.
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# references/python/ lives two levels up from smoke-fixture/ (evals/ -> python/).
+# references/python/ lives two levels up from sample-check/ (evals/ -> python/).
 REFERENCES_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PYTHON="${PYTHON:-python3}"
 
@@ -37,7 +37,7 @@ for entry in "${SAMPLES[@]}"; do
   src="${REFERENCES_DIR}/${entry%%:*}"
   [[ -f "$src" ]] || { echo "ERROR: required input not found: $src" >&2; exit 1; }
 done
-for f in "${SCRIPT_DIR}/smoke.py" "${REFERENCES_DIR}/scripts/verify.sh"; do
+for f in "${SCRIPT_DIR}/check_samples.py" "${REFERENCES_DIR}/scripts/verify.sh"; do
   [[ -f "$f" ]] || { echo "ERROR: required input not found: $f" >&2; exit 1; }
 done
 
@@ -69,7 +69,7 @@ echo "Installing solace-pubsubplus==${VERSION} with $("$VENV_PY" --version)..."
 for entry in "${SAMPLES[@]}"; do
   cp "${REFERENCES_DIR}/${entry%%:*}" "${WORK_DIR}/${entry##*:}"
 done
-cp "${SCRIPT_DIR}/smoke.py" "${WORK_DIR}/smoke.py"
+cp "${SCRIPT_DIR}/check_samples.py" "${WORK_DIR}/check_samples.py"
 
 # (4) py_compile every sample.
 echo "Running py_compile on every baked sample..."
@@ -79,7 +79,7 @@ echo "PASS: py_compile"
 # (5) Import each sample and build its API objects without a broker, then exercise
 #     the connection helper.
 echo "Building the API objects against tcp://localhost:55555 without a broker..."
-( cd "$WORK_DIR" && "$VENV_PY" smoke.py )
+( cd "$WORK_DIR" && "$VENV_PY" check_samples.py )
 
 # (6) The bundled verify script must at least parse.
 bash -n "${REFERENCES_DIR}/scripts/verify.sh"

@@ -16,7 +16,7 @@ This repository is a Claude Code plugin marketplace (`solace-agent-plugins`) of 
 | `tools/` | CI check scripts, the two eval runners, and `output-evals.schema.json`. |
 | `.github/workflows/ci.yml` | The only CI workflow. |
 
-Nothing in the repository is generated or vendored. The Eclipse files under `references/jcsmp/evals/compile-fixture/` are IDE metadata for the compile fixture; leave them alone.
+Nothing in the repository is generated or vendored. The Eclipse files under `references/jcsmp/evals/sample-check/` are IDE metadata for the JCSMP sample check; leave them alone.
 
 ## Commands
 
@@ -27,8 +27,8 @@ gh skill publish --dry-run                       # skills against the Agent Skil
 claude plugin validate . --strict                # marketplace and plugin manifests
 ./tools/check-plugin-versions.sh --sync-only     # marketplace.json matches plugins/
 ./tools/check-links.sh plugins                   # broken and soft-404 doc links
-./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/compile-fixture/compile.sh   # compile the baked JCSMP samples
-./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/smoke-fixture/smoke.sh     # smoke the baked Python samples (python3 and PyPI access)
+./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/sample-check/check-samples.sh    # check the baked JCSMP samples (compile and config smoke)
+./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/sample-check/check-samples.sh   # check the baked Python samples (python3 and PyPI access)
 claude --plugin-dir plugins/solace-messaging-skills   # load the plugin from the clone
 ```
 
@@ -48,7 +48,7 @@ The trigger runner has no single-case mode; set `TRIGGER_EVAL_RUNS=1` for a quic
 - Link documentation to the live `docs.solace.com` `.md` URL. Do not copy doc content into a skill. Every link under `plugins/` must pass `check-links.sh`.
 - A new skill needs cases in both `trigger-evals.json` (positive and near-miss negative prompts) and `output-evals.json` (validate the latter against `tools/output-evals.schema.json`).
 - A new, removed, or renamed plugin directory needs the matching `marketplace.json` change in the same pull request.
-- A new baked JCSMP sample must be added to the sample roster in `compile.sh`, or the compile check does not cover it. A new baked Python sample goes into the roster in `smoke.sh` and the module list in `smoke.py`.
+- A new baked JCSMP sample must be added to the sample roster in `jcsmp/evals/sample-check/check-samples.sh`, or the sample check does not cover it. A new baked Python sample goes into the roster in `python/evals/sample-check/check-samples.sh` and the module list in `check_samples.py`.
 - Do not put exact counts (of cases, skills, or graders) in READMEs or skill docs. They go stale.
 
 ## Gotchas / do not

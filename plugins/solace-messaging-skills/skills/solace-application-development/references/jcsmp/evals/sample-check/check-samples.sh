@@ -23,7 +23,7 @@ set -euo pipefail
 # Resolve this script's own directory so sample/pom paths are independent of CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POM="${SCRIPT_DIR}/pom.xml"
-# references/jcsmp/ lives two levels up from compile-fixture/ (evals/ -> jcsmp/).
+# references/jcsmp/ lives two levels up from sample-check/ (evals/ -> jcsmp/).
 REFERENCES_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Per-sample source paths. Each new baked sample a later per-pattern plan adds is
 # a ONE-LINE append here, mirroring this shape:
