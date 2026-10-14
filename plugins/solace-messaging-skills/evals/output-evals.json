@@ -89,7 +89,7 @@
       { "type": "tool_use", "tool": "*", "input_pattern": "repo1\\.maven\\.org/maven2/com/solacesystems/sol-jcsmp/maven-metadata\\.xml", "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" }
     ]
   },

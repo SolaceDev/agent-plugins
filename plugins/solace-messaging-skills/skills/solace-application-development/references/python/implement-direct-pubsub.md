@@ -1,0 +1,38 @@
+# Implement: Direct Pub/Sub leaf
+
+The per-leaf wiring for the Direct Pub/Sub leaf of the Python API. Read this file from `implement-mode.md` Step 4 when the `Pattern` field is `Direct Pub/Sub`. The shared Step 4 rules in `implement-mode.md` (the disclaimer header, the shared connection helper, the fixed file names, the concurrency rules, the variant discipline, the demo-harness rule, the comments rule, and the Quickstart fail-fast rule) apply here unchanged.
+
+## Direct pub/sub flow
+
+Generation reads the direct pub/sub sample pair and adapts each into its own generated script, the same near-verbatim discipline the guaranteed flow uses: `direct_publisher.py` is a near-verbatim adaptation of the publisher sample, and `direct_subscriber.py` is a near-verbatim adaptation of the subscriber sample. Direct messaging is at-most-once: there is no broker receipt and no redelivery, so this leaf has NO queue, NO provisioning, NO client acknowledgement, and NO publish receipt listener.
+
+- `python-direct-publisher-sample.py`: basic-auth connect, a continuous DIRECT binary publish loop with a rotating payload to a dynamic topic, a publish failure listener for the asynchronous failures the API reports, capacity-bounded back pressure, service event listeners registered before `connect()`, and a graceful SIGINT/SIGTERM shutdown. No receipt listener and no user context (direct has no broker receipt). Generation STRIPS the continuous loop, the rotating payload, the dynamic topic, and the stats thread down to a short bounded burst that self-exits (publisher steps below).
+- `python-direct-subscriber-sample.py`: basic-auth connect, a plain topic subscription on a direct receiver (no queue, no provisioning), capacity-bounded back pressure with discard detection, service event listeners registered before `connect()`, and a graceful SIGINT/SIGTERM shutdown. The subscriber is the long-running SIGINT target.
+
+Each script builds its OWN `MessagingService` (two services, one per script, matching the samples). Keep the samples' structure: the shared state dataclass, `setup_solace(...)` that builds the service and the receiver or publisher before any connection exists, `connect_solace(...)`, the main loop, and `teardown_solace(...)` in `main()`'s `finally`. Keep every listener class; they are part of the best-practices contract and must not be stripped during adaptation.
+
+**Ground before you write.** Before writing either script, WebFetch [Publishing Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-DM-Publish.md) and [Consuming Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Python/Python-DM-Receive.md) in this session (SKILL.md Invariant 2).
+
+## Subscriber script (`direct_subscriber.py`)
+
+The subscriber subscribes directly to the topic (no queue), receives asynchronously, and is the long-running process the developer runs FIRST. Start the file with the disclaimer header, then wire it in this sequence:
+
+1. Build the connection properties with `load_service_properties(args, APP_NAME)`, then the service with `MessagingService.builder().from_properties(properties).build()` (on Quickstart without the reconnection strategy call, per the fail-fast rule).
+2. Build the direct receiver as the sample does: `create_direct_message_receiver_builder()` with `with_subscriptions([TopicSubscription.of(topic)])` for the design summary's topic and `on_back_pressure_drop_latest(RECEIVE_BUFFER_CAPACITY)`, then `build()`. Register the three service event listeners BEFORE `connect()`. There is NO queue and NO missing-resources creation strategy on the direct path.
+3. `messaging_service.connect()`. Immediately after `connect()` returns, emit the connect marker: `trace("VERIFY: CONNECTED")`.
+4. `receiver.receive_async(handler)` BEFORE `receiver.start()`, as the sample orders them, then `receiver.start()`. `start()` applies the subscription and blocks until the broker confirms it. Immediately after `start()` returns, emit the subscribed marker: `trace("VERIFY: SUBSCRIBED")`. **No reapply-subscriptions setting.** The JCSMP direct subscriber must set `REAPPLY_SUBSCRIPTIONS` to `true`, or its subscription is lost on an automatic reconnect. The Python API has no such setting and needs none: the [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md) page states that the API re-applies the application's direct subscriptions on reconnect. Do not search for or invent a Python equivalent. Keep the sample's `on_reconnected` comment that says so. When reconnect attempts are exhausted, the same page states that the application must recreate the session with all its subscriptions; the sample's `on_service_interrupted` handler covers that case by shutting down.
+5. In the handler's `on_message`, keep the sample's payload read and its discard check (`get_message_discard_notification()`), then emit the receipt marker: `trace("VERIFY: MESSAGE_RECEIVED")`. There is NO `ack()` on the direct path.
+6. KEEP the long-running wait loop, the SIGINT/SIGTERM handler that only sets the shutdown event, and `teardown_solace(...)` with `terminate(grace_period)` and `disconnect()`. The subscriber is the SIGINT target, and its shutdown line (`Shutdown signal received ...`) stays a `trace(...)` call.
+
+## Publisher script (`direct_publisher.py`)
+
+The publisher only connects and publishes a short bounded burst of DIRECT messages, then exits on its own. It does NOT provision anything and does NOT wait for a key press or a signal. Start the file with the disclaimer header, then wire it in this sequence:
+
+1. Build the connection properties and the service exactly as the subscriber does (step 1 above), then the publisher with `create_direct_message_publisher_builder().on_back_pressure_wait(PUBLISH_BUFFER_CAPACITY).build()`. Keep `set_publish_failure_listener(...)`: direct has no broker receipt, so a buffered message that cannot be sent is reported only through that listener. Register the three service event listeners BEFORE `connect()`.
+2. `messaging_service.connect()`. Immediately after `connect()` returns, emit the connect marker: `trace("VERIFY: CONNECTED")`. Then `publisher.start()`.
+3. Publish a SHORT BOUNDED BURST to the design summary's topic with `publish(payload, Topic.of(topic))` in a small fixed-count loop, then return from the publish step. REMOVE the sample's continuous loop, its rotating payload and dynamic topic, and its stats thread. Keep the sample's `PubSubPlusClientError` branch, which sets the shared state's `exit_code` to 1. `teardown_solace(...)` in `main()`'s `finally` calls `terminate(grace_period)`, which gives the buffered messages up to the grace period to leave before `disconnect()`. Keep the SIGINT/SIGTERM handler, so Ctrl-C during a back pressure wait still reaches teardown. When the request describes a real application, its own messages replace the burst (the demo-harness rule).
+4. The publisher emits NO send-side marker. Direct has no broker receipt, so there is no `PUBLISH_ACKED` analog; a marker after `publish()` would only prove the local call returned. The proof of the round trip is `VERIFY: MESSAGE_RECEIVED` in the subscriber output.
+
+## The marker contract
+
+These three `VERIFY:` marker strings (`VERIFY: CONNECTED`, `VERIFY: SUBSCRIBED`, `VERIFY: MESSAGE_RECEIVED`) are the same strings the JCSMP Direct Pub/Sub leaf emits, character for character. They are read PER PROCESS: the subscriber output carries `SUBSCRIBED` and `MESSAGE_RECEIVED`, and both scripts print `CONNECTED`. Until the Python verify script lands, the developer reads them from the two terminals (`implement-mode.md` Step 5); the verify script will read the same strings, so never change one.
