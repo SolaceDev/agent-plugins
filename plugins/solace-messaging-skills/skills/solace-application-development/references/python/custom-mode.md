@@ -13,7 +13,7 @@ When the developer picks Custom, establish the design summary first (per `implem
 Custom offers FIVE knobs, and only these five. There is no sixth knob and no authentication knob; basic username/password is the only auth this journey generates, exactly as on Quickstart and Solace Suggested, so it is never a Custom checklist item. Four of the five knobs reuse a `solace-suggested-mode.md` step; the fifth is defined in this file:
 
 1. **Secure session (TLS).** Apply `solace-suggested-mode.md` Step 1: a `tcps://` host, explicit certificate validation, and the developer's trust store directory in `config.json`. Do not restate that logic here; the overlay step is the source of truth.
-2. **HA reconnect values.** Apply `solace-suggested-mode.md` Step 2: the HA-failover question and the retry strategies and retries-per-host value it gates.
+2. **HA reconnect values.** Apply `solace-suggested-mode.md` Step 2: the HA-failover question and the retry strategies and retries-per-host value it gates. Unticked keeps the samples' reconnect baseline (20 retries 3000 ms apart), not the fail-fast API defaults; ticked applies the HA values when the HA-failover question is answered yes.
 3. **DMQ eligibility.** Apply `solace-suggested-mode.md` Step 3: `PERSISTENT_DMQ_ELIGIBLE` set explicitly on the persistent publisher's message template, with the broker-side prerequisite stated as the developer's responsibility.
 4. **Decoupled projects.** Apply `solace-suggested-mode.md` Step 4: separate, independent Python projects, one per role.
 5. **Admin-provisioned queue.** The one knob that is a real code change rather than a reused overlay step. It is defined in full in the "Admin-provisioned-queue knob" section below.
