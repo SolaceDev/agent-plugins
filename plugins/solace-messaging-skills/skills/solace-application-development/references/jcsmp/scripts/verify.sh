@@ -24,13 +24,18 @@
 # foreground and lets it exit on its own, watches each process's OWN captured
 # output for a fixed VERIFY: marker line, sends SIGINT to the subscriber to
 # exercise its graceful-shutdown hook, and classifies the outcome by exit code:
-#   0 = stage passed  (marker seen, the shutdown hook ran, AND the subscriber
-#       exited cleanly. A clean exit is exit code 0 OR 130: the JVM reports 130
+#   0 = stage passed  (marker seen in this run, the foreground role exited with
+#       status 0 on its own, the shutdown hook ran, AND the subscriber exited
+#       cleanly. A clean exit is exit code 0 OR 130: the JVM reports 130
 #       (128+SIGINT) when it terminates AFTER running its shutdown hooks, which
-#       is the expected, graceful outcome here)
+#       is the expected, graceful outcome here. The app stage instead passes on
+#       READY_MARKER, then a new PASS_MARKER after the trigger, and a bounded
+#       teardown; the app's shutdown is not checked)
 #   1 = code failure  (compile failed, a marker never appeared, a process died
-#       before its milestone, the shutdown hook did not run, or a run hung and
-#       had to be force-killed)
+#       before its milestone, the foreground role exited non-zero, the shutdown
+#       hook did not run, or a run hung and had to be force-killed), OR a
+#       precondition miss before any process starts (a usage error, or a missing
+#       pom.xml or verify-hooks.sh); stderr names which
 #   2 = environment failure (broker/credentials: a doc-traceable JCSMP error
 #       signature appeared in either process log; the code is not the problem,
 #       so the agent must NOT enter the fix loop)
@@ -215,7 +220,8 @@ echo "── Live-run heads-up: stage '$STAGE' starts processes that connect to 
 # stage waits for a role-specific milestone in that role's OWN log:
 #   publisher → VERIFY: PUBLISH_ACKED   in PUB_LOG (the publish ACK callback fired)
 #   consumer  → VERIFY: QUEUE_BOUND     in SUB_LOG (flow.start() bound the durable queue)
-#   roundtrip → VERIFY: MESSAGE_RECEIVED in SUB_LOG (a published message was consumed + ACKed)
+#   roundtrip → VERIFY: PUBLISH_ACKED in PUB_LOG, then a NEW VERIFY: MESSAGE_RECEIVED in SUB_LOG
+#               (a published message was consumed + ACKed; a stale queued one does not count)
 # Reaching any stage marker already proves the connect happened for that process.
 # These strings form a fixed contract with the VERIFY: markers that
 # implement-mode.md Step 4 instructs the generated app to println. The two MUST
@@ -223,7 +229,7 @@ echo "── Live-run heads-up: stage '$STAGE' starts processes that connect to 
 case "$STAGE" in
     publisher) ;;  # waits for VERIFY: PUBLISH_ACKED in PUB_LOG
     consumer)  ;;  # waits for VERIFY: QUEUE_BOUND in SUB_LOG
-    roundtrip) ;;  # waits for VERIFY: MESSAGE_RECEIVED in SUB_LOG
+    roundtrip) ;;  # waits for VERIFY: PUBLISH_ACKED, then a new VERIFY: MESSAGE_RECEIVED in SUB_LOG
     direct) ;;                    # direct pub/sub stage
     direct-request-reply) ;;      # direct request-reply stage
     guaranteed-request-reply) ;;  # guaranteed request-reply stage
@@ -448,7 +454,13 @@ else
     # (subscriber-first ordering, D-07-R11). The wait is BOUNDED: a publisher that
     # hangs past PUBLISH_WAIT_S is escalated and classified as a code failure so
     # the unattended script NEVER hangs.
+    published=0
+    stale=0
     if { [ "$STAGE" = "publisher" ] || [ "$STAGE" = "roundtrip" ]; } && [ "$bound" -eq 1 ]; then
+        # A receipt already in the log is a message an earlier run left on the durable
+        # queue, delivered at bind time; the round trip must see a receipt beyond these.
+        stale=$(grep -cF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG" || true)
+        [ "$stale" -eq 0 ] || echo "── $stale message(s) left on the queue by an earlier run arrived before the publisher started; they do not count ──" >&2
         echo "── Running publisher (mvn -q exec:java@publisher), watching for: VERIFY: PUBLISH_ACKED ──"
         set -m
         if [ "$TWO_PROJECT" -eq 1 ]; then
@@ -479,32 +491,37 @@ else
 
         if [ "$pub_hung" -eq 1 ]; then
             # The publisher did not exit on its own within the deadline; escalate
-            # and treat the hang as a code failure (status stays 1).
+            # and record the hang (pub_rc 124), which fails the stage.
             echo "── Publisher did not exit within ${PUBLISH_WAIT_S}s; escalating (SIGTERM, then SIGKILL) ──" >&2
             kill -TERM "$PUB_PID" 2>/dev/null || true
             sleep 2
             kill -KILL "$PUB_PID" 2>/dev/null || true
             wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=124  # synthetic "timed out" code; never a clean exit
         else
-            wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=0
+            wait "$PUB_PID" 2>/dev/null || pub_rc=$?
         fi
 
         if grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
             status=2  # environment failure (broker/credentials), bypass the fix loop
-        elif [ "$STAGE" = "publisher" ] && grep -qF "VERIFY: PUBLISH_ACKED" "$PUB_LOG"; then
-            status=0  # the publish ACK callback fired
+        elif [ "$pub_rc" -eq 0 ] && grep -qF "VERIFY: PUBLISH_ACKED" "$PUB_LOG"; then
+            published=1  # the publish ACK callback fired and the publisher exited 0
+            if [ "$STAGE" = "publisher" ]; then status=0; fi
         fi
     fi
 
     # ── STAGE C: confirm receipt on the SUBSCRIBER's log (roundtrip only) ────────
-    if [ "$STAGE" = "roundtrip" ] && [ "$status" -ne 2 ]; then
+    # One receipt more than before the publisher ran. A publisher that never acked,
+    # exited non-zero, or hung cannot pass the round trip.
+    if [ "$STAGE" = "roundtrip" ] && [ "$published" -eq 1 ]; then
         rt_deadline=$(( SECONDS + TIMEOUT_S ))
         while [ "$SECONDS" -lt "$rt_deadline" ]; do
             if grep -qE "$ENV_SIGNATURES" "$SUB_LOG"; then
                 status=2
                 break
             fi
-            if grep -qF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG"; then
+            if [ "$(grep -cF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG" || true)" -gt "$stale" ]; then
                 status=0  # a published message was consumed + ACKed
                 break
             fi
@@ -639,8 +656,10 @@ run_direct_stage() {
             sleep 2
             kill -KILL "$PUB_PID" 2>/dev/null || true
             wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=124  # synthetic "timed out" code; never a clean exit
         else
-            wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=0
+            wait "$PUB_PID" 2>/dev/null || pub_rc=$?
         fi
 
         # ── Pass condition: at least one VERIFY: MESSAGE_RECEIVED in the subscriber ─
@@ -651,6 +670,9 @@ run_direct_stage() {
             if grep -qE "$ENV_SIGNATURES" "$SUB_LOG" || grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
                 status=2  # environment failure (broker/credentials), bypass the fix loop
                 break
+            fi
+            if [ "$pub_rc" -ne 0 ]; then
+                break  # the publisher exited non-zero or hung (code failure)
             fi
             if grep -qF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG"; then
                 status=0  # at least one direct message was received (D-04 pass)
@@ -666,7 +688,7 @@ run_direct_stage() {
         # clean, but not one message of the burst arrived) stays status 1; the case-1 print is
         # annotated with the Direct at-most-once caveat below (D-05). An env match
         # already set status 2 above.
-        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$pub_rc" -eq 0 ]; then
             DIRECT_ZERO_RECEIPT=1
         fi
 
@@ -819,8 +841,10 @@ run_request_reply_stage() {
             sleep 2
             kill -KILL "$PUB_PID" 2>/dev/null || true
             wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=124  # synthetic "timed out" code; never a clean exit
         else
-            wait "$PUB_PID" 2>/dev/null || true
+            pub_rc=0
+            wait "$PUB_PID" 2>/dev/null || pub_rc=$?
         fi
 
         # ── Pass condition: VERIFY: REPLY_RECEIVED in the requestor's OWN log, AND ─
@@ -828,14 +852,14 @@ run_request_reply_stage() {
         # match in either log maps to status 2.
         if grep -qE "$ENV_SIGNATURES" "$SUB_LOG" || grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
             status=2  # environment failure (broker/credentials), bypass the fix loop
-        elif grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG" && grep -qF "VERIFY: REQUEST_RECEIVED" "$SUB_LOG"; then
+        elif [ "$pub_rc" -eq 0 ] && grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG" && grep -qF "VERIFY: REQUEST_RECEIVED" "$SUB_LOG"; then
             status=0  # the request landed on the replier and the correlated reply came back
         fi
 
         # A clean requestor run with no reply (subscription was confirmed, the requestor
         # ran and self-exited, but no VERIFY: REPLY_RECEIVED) stays status 1; the case-1
         # print is annotated with the no-reply caveat below. An env match already set 2.
-        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$pub_rc" -eq 0 ]; then
             RR_NO_REPLY=1
         fi
 
@@ -933,6 +957,10 @@ run_app_stage() {
         # response never came back. Reusing PUB_PID (not a new name) keeps the
         # EXIT trap's group-kill coverage over an orphaned trigger.
         sleep 2
+        # A PASS_MARKER already in the log (a backlog the app consumed at startup)
+        # does not count; the trigger must produce a new one.
+        local seen
+        seen=$(grep -cF "$PASS_MARKER" "$SUB_LOG" || true)
         echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
         set -m
         bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
@@ -957,7 +985,7 @@ run_app_stage() {
                 status=2
                 break
             fi
-            if grep -qF "$PASS_MARKER" "$SUB_LOG"; then
+            if [ "$(grep -cF "$PASS_MARKER" "$SUB_LOG" || true)" -gt "$seen" ]; then
                 status=0  # the pass marker appeared in the app's own captured output
                 break
             fi
@@ -999,7 +1027,7 @@ case "$status" in
         if [ "$STAGE" = "app" ]; then
             echo "PASS (app): the readiness and pass markers were observed in the app's own captured output, and the app was stopped with a bounded teardown."
         else
-            echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the subscriber's shutdown hook ran ('$SHUTDOWN_LINE'), and the subscriber exited cleanly (exit 0 or 130)."
+            echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the foreground role exited with status 0, the subscriber's shutdown hook ran ('$SHUTDOWN_LINE'), and the subscriber exited cleanly (exit 0 or 130)."
         fi
         ;;
     2) echo "ENV FAILURE ($STAGE): a JCSMP connection/auth signature matched in a process log (broker or credentials are wrong, not the code). NOT entering the fix loop." >&2 ;;
@@ -1009,7 +1037,9 @@ case "$status" in
         elif [ "$RR_NO_REPLY" -eq 1 ]; then
             echo "CODE FAILURE ($STAGE): the replier subscribed (VERIFY: SUBSCRIBED) and the requestor ran and self-exited, but no correlated reply came back (VERIFY: REPLY_RECEIVED never appeared in the requestor log). Check the requestor's request topic against the replier's subscription, the reply-to handling (the requestor's createRequestor / the replier's sendReply onto getReplyTo), and whether VERIFY: REQUEST_RECEIVED appeared in the replier log: its absence means the request never reached the replier, its presence means the reply was lost on the way back." >&2
         else
-            echo "CODE FAILURE ($STAGE): the stage milestone was not observed, a process died before its milestone, the shutdown hook did not run, or a run hung and had to be force-killed." >&2
+            fg_note=""
+            [ "$STAGE" = "app" ] || [ "${pub_rc:-0}" -eq 0 ] || fg_note=" The foreground role exited with status $pub_rc (124: it did not exit on its own and was force-killed)."
+            echo "CODE FAILURE ($STAGE): the stage milestone was not observed, a process died before its milestone, the foreground role exited non-zero, the shutdown hook did not run, or a run hung and had to be force-killed.$fg_note" >&2
         fi
         ;;
 esac

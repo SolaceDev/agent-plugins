@@ -15,21 +15,21 @@ whether or not a broker listens there. Any failure raises, and the non-zero exit
 the gate.
 """
 
+import glob
 import importlib
 import json
 import os
 import tempfile
 import threading
 
-MODULES = [
-    "guaranteed_publisher",
-    "guaranteed_subscriber",
-    "direct_publisher",
-    "direct_subscriber",
-    "direct_requestor_blocking",
-    "direct_requestor",
-    "direct_replier",
-]
+# Every sample check-samples.sh copied in, so a new roster entry is covered without a
+# second list to keep in step. The shared helper has no setup_solace() of its own.
+NOT_SAMPLES = {"check_samples", "solace_connection_config"}
+MODULES = sorted(
+    name
+    for name in (os.path.splitext(path)[0] for path in glob.glob("*.py"))
+    if name not in NOT_SAMPLES
+)
 
 HOST_KEY = "solace.messaging.transport.host"
 VPN_KEY = "solace.messaging.service.vpn-name"
@@ -45,6 +45,8 @@ PROPERTIES = {
 
 
 def build_samples() -> None:
+    if not MODULES:
+        raise RuntimeError("no sample modules found in the working directory")
     for name in MODULES:
         module = importlib.import_module(name)
         state = module.setup_solace(dict(PROPERTIES), threading.Event())

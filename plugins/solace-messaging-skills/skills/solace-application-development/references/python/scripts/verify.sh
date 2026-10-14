@@ -7,6 +7,8 @@
 #     verify.sh <publisher|consumer|roundtrip|direct|direct-request-reply> [<host:port> <vpn> <user> [pass]]
 #       With no connection arguments, each script reads ./config.json (the only way
 #       to reach a tcps:// host, because the trust store path has no argument form).
+#       Connection arguments are refused when ./config.json exists, because the
+#       scripts prefer config.json and would connect to a different broker.
 #   Separate projects (Solace Suggested, or the Custom decoupled-projects knob;
 #   each project has its own .venv and reads its own gitignored config.json):
 #     verify.sh <publisher|consumer|roundtrip|direct> --subscriber-dir <dir> --publisher-dir <dir>
@@ -23,11 +25,16 @@
 # OWN captured output for the fixed VERIFY: marker lines, sends SIGINT to the
 # long-running role to exercise its graceful shutdown, and classifies the
 # outcome by exit code:
-#   0 = stage passed  (marker seen, the shutdown line printed, AND the
-#       long-running role exited with status 0)
+#   0 = stage passed. For the fixed stages: the marker was seen in this run, the
+#       foreground role exited with status 0 on its own, the shutdown line
+#       printed, AND the long-running role exited with status 0. For the app
+#       stage: READY_MARKER, then a new PASS_MARKER after the trigger, and a
+#       bounded teardown (the app's shutdown is not checked).
 #   1 = code failure  (py_compile failed, a marker never appeared, a process died
-#       before its milestone, the shutdown line never printed, or a run hung and
-#       had to be force-killed)
+#       before its milestone, the foreground role exited non-zero, the shutdown
+#       line never printed, or a run hung and had to be force-killed), OR a
+#       precondition miss before any process starts (a usage error, or a missing
+#       script, .venv, config.json, or verify-hooks.sh). stderr names which.
 #   2 = environment failure (a Solace Python API connection, authentication, or
 #       TLS signature appeared in a process log; the code is not the problem, so
 #       the agent must NOT enter the fix loop)
@@ -61,7 +68,7 @@ set -euo pipefail
 usage() {
     cat >&2 <<'EOF'
 usage:
-  # Single project (scripts read ./config.json when no connection arguments are given):
+  # Single project (scripts read ./config.json; pass connection arguments only when there is no config.json):
   verify.sh <publisher|consumer|roundtrip|direct|direct-request-reply> [<host:port> <vpn> <user> [pass]]
 
   # Separate projects (each project reads its own gitignored config.json):
@@ -124,7 +131,8 @@ else
     case "${#CONN_ARGS[@]}" in
         0) [ -f config.json ] || {
                echo "no connection details: pass <host:port> <vpn> <user> [pass], or create config.json from config.example.json" >&2; usage; } ;;
-        3|4) ;;
+        3|4) [ ! -f config.json ] || {
+               echo "config.json exists and the scripts prefer it over connection arguments; omit the arguments, or remove config.json" >&2; usage; } ;;
         *) echo "connection arguments are <host:port> <vpn> <user> [pass]" >&2; usage ;;
     esac
 fi
@@ -324,32 +332,37 @@ shutdown_long_running() {
 
 # Wait for the foreground role ($1) to exit on its own, bounded by PUBLISH_WAIT_S.
 # A role that hangs is escalated; its missing marker then classifies the run.
-wait_foreground() {  # <pid> <label>
-    local deadline=$(( SECONDS + PUBLISH_WAIT_S ))
+wait_foreground() {  # <pid> <label>; sets fg_rc to its exit code, or 124 when it hung
+    local deadline=$(( SECONDS + PUBLISH_WAIT_S )) hung=0
     while kill -0 "$1" 2>/dev/null; do
         if [ "$SECONDS" -ge "$deadline" ]; then
             echo "── $2 did not exit within ${PUBLISH_WAIT_S}s; escalating (SIGTERM, then SIGKILL) ──" >&2
             kill -TERM -- "-$1" 2>/dev/null || true
             sleep 2
             kill -KILL -- "-$1" 2>/dev/null || true
+            hung=1
             break
         fi
         sleep 1
     done
-    wait "$1" 2>/dev/null || true
+    fg_rc=0
+    wait "$1" 2>/dev/null || fg_rc=$?
+    [ "$hung" -eq 0 ] || fg_rc=124
 }
 
 # Watch the long-running role's log for <marker> within TIMEOUT_S. Returns 0 when
-# the marker appears. Sets status=2 on an environment signature (or the endpoint
-# denial) and returns 1; returns 1 when the process dies or the deadline passes.
-watch_marker() {  # <log> <pid> <marker>
+# the marker appears more often than <seen> times (default 0), so a caller can
+# ignore marker lines already in the log. Sets status=2 on an environment signature
+# (or the endpoint denial) and returns 1; returns 1 when the process dies or the
+# deadline passes.
+watch_marker() {  # <log> <pid> <marker> [<seen>]
     local deadline=$(( SECONDS + TIMEOUT_S ))
     while [ "$SECONDS" -lt "$deadline" ]; do
         if grep -qE "$ENV_SIGNATURES" "$1" || grep -qF "$ENDPOINT_DENIED" "$1"; then
             status=2
             return 1
         fi
-        grep -qF "$3" "$1" && return 0
+        [ "$(grep -cF "$3" "$1" || true)" -gt "${4:-0}" ] && return 0
         kill -0 "$2" 2>/dev/null || return 1
         sleep 1
     done
@@ -384,22 +397,29 @@ run_guaranteed_stage() {
     fi
     [ "$STAGE" = "consumer" ] && status=0
 
+    local published=0 stale=0
     if [ "$STAGE" = "publisher" ] || [ "$STAGE" = "roundtrip" ]; then
+        # A receipt already in the log is a message an earlier run left on the durable
+        # queue, delivered at bind time; the round trip must see a receipt beyond these.
+        stale=$(grep -cF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG" || true)
+        [ "$stale" -eq 0 ] || echo "── $stale message(s) left on the queue by an earlier run arrived before the publisher started; they do not count ──" >&2
         echo "── Running publisher ($PUB_SCRIPT), watching for: VERIFY: PUBLISH_ACKED ──"
         start_role "$PUB_DIR" "$PUB_PY" "$PUB_SCRIPT" "$PUB_LOG"
         PUB_PID=$LAUNCHED_PID
         wait_foreground "$PUB_PID" "Publisher"
         if grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
             status=2
-        elif [ "$STAGE" = "publisher" ] && grep -qF "VERIFY: PUBLISH_ACKED" "$PUB_LOG"; then
-            status=0
+        elif [ "$fg_rc" -eq 0 ] && grep -qF "VERIFY: PUBLISH_ACKED" "$PUB_LOG"; then
+            published=1
+            if [ "$STAGE" = "publisher" ]; then status=0; fi
         fi
     fi
 
-    # Confirm receipt in the SUBSCRIBER's log (roundtrip only). PUBLISH_ACKED alone
-    # does not prove delivery.
-    if [ "$STAGE" = "roundtrip" ] && [ "$status" -ne 2 ]; then
-        watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: MESSAGE_RECEIVED" && status=0
+    # Confirm receipt in the SUBSCRIBER's log (roundtrip only): one receipt more than
+    # before the publisher ran. PUBLISH_ACKED alone does not prove delivery, and a
+    # publisher that never acked, exited non-zero, or hung cannot pass the round trip.
+    if [ "$STAGE" = "roundtrip" ] && [ "$published" -eq 1 ]; then
+        watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: MESSAGE_RECEIVED" "$stale" && status=0
     fi
 
     shutdown_long_running "$SUB_PID"
@@ -430,10 +450,10 @@ run_direct_stage() {
 
     if grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
         status=2
-    elif watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: MESSAGE_RECEIVED"; then
+    elif [ "$fg_rc" -eq 0 ] && watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: MESSAGE_RECEIVED"; then
         status=0
     fi
-    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$fg_rc" -eq 0 ]; then
         DIRECT_ZERO_RECEIPT=1
     fi
 
@@ -464,10 +484,10 @@ run_request_reply_stage() {
 
     if grep -qE "$ENV_SIGNATURES" "$SUB_LOG" || grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; then
         status=2
-    elif grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG" && grep -qF "VERIFY: REQUEST_RECEIVED" "$SUB_LOG"; then
+    elif [ "$fg_rc" -eq 0 ] && grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG" && grep -qF "VERIFY: REQUEST_RECEIVED" "$SUB_LOG"; then
         status=0
     fi
-    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$fg_rc" -eq 0 ]; then
         RR_NO_REPLY=1
     fi
 
@@ -502,6 +522,10 @@ run_app_stage() {
 
     if watch_marker "$SUB_LOG" "$SUB_PID" "$READY_MARKER"; then
         sleep 2  # settle window
+        # A PASS_MARKER already in the log (a backlog the app consumed at startup)
+        # does not count; the trigger must produce a new one.
+        local seen
+        seen=$(grep -cF "$PASS_MARKER" "$SUB_LOG" || true)
         echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
         set -m
         bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
@@ -509,7 +533,7 @@ run_app_stage() {
         set +m
         # The trigger's exit code is never part of the verdict; the markers are.
         wait_foreground "$PUB_PID" "Trigger"
-        watch_marker "$SUB_LOG" "$SUB_PID" "$PASS_MARKER" && status=0
+        watch_marker "$SUB_LOG" "$SUB_PID" "$PASS_MARKER" "$seen" && status=0
     fi
     shutdown_long_running "$SUB_PID"
 }
@@ -534,7 +558,7 @@ case "$status" in
         if [ "$STAGE" = "app" ]; then
             echo "PASS (app): the readiness and pass markers were observed in the app's own captured output, and the app was stopped with a bounded teardown."
         else
-            echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the long-running role printed '$SHUTDOWN_LINE', and it exited with status 0."
+            echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the foreground role exited with status 0, the long-running role printed '$SHUTDOWN_LINE', and it exited with status 0."
         fi
         ;;
     2) echo "ENV FAILURE ($STAGE): a Solace Python API connection, authentication, or TLS signature (or the queue bind denial) matched in a process log; the broker, credentials, trust store, or client permissions are wrong, not the code. NOT entering the fix loop." >&2 ;;
@@ -544,7 +568,9 @@ case "$status" in
         elif [ "$RR_NO_REPLY" -eq 1 ]; then
             echo "CODE FAILURE ($STAGE): the replier subscribed (VERIFY: SUBSCRIBED) and the requestor ran and exited, but VERIFY: REPLY_RECEIVED never appeared in the requestor log. If VERIFY: REQUEST_RECEIVED is missing from the replier log, the request never reached the replier: check the request topic against the replier's subscription. If it is present, the reply was lost: check that the replier answers with replier.reply()." >&2
         else
-            echo "CODE FAILURE ($STAGE): the stage milestone was not observed, a process died before its milestone, the shutdown line did not print, the long-running role exited non-zero, or a run hung and had to be force-killed." >&2
+            fg_note=""
+            [ "$STAGE" = "app" ] || [ "${fg_rc:-0}" -eq 0 ] || fg_note=" The foreground role exited with status $fg_rc (124: it did not exit on its own and was force-killed)."
+            echo "CODE FAILURE ($STAGE): the stage milestone was not observed, a process died before its milestone, the foreground role exited non-zero, the shutdown line did not print, the long-running role exited non-zero, or a run hung and had to be force-killed.$fg_note" >&2
         fi
         ;;
 esac
