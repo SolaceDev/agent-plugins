@@ -188,7 +188,7 @@ The `app` stage starts `START_CMD` in the background and captures its output, wa
 
 - **Exit 0 (stage passes).** The stage milestone appeared in this run and the run tore down cleanly (for the fixed stages that includes a foreground role that exited with status 0 on its own, the graceful-shutdown proof line, and a clean JVM exit, 0 or 130). Advance to the next stage.
 - **Exit 1 (code failure).** Compile failed, a marker never appeared, a process died before its milestone, the foreground role exited non-zero, or a run hung and had to be force-killed. Enter the bounded fix loop below. An exit 1 before any process starts is a missing precondition instead (a usage error, or a missing `pom.xml` or `verify-hooks.sh`), and stderr names it: fix that and re-run, without counting it as a fix-loop attempt.
-- **Exit 2 (environment failure).** A doc-traceable JCSMP connection/auth signature appeared (the broker is unreachable or the credentials are wrong). STOP. Do NOT enter the fix loop. The code is not the problem.
+- **Exit 2 (environment failure).** A doc-traceable JCSMP connection/auth signature appeared (the broker is unreachable or the credentials are wrong), or the long-running role was still connecting when the readiness deadline passed and never printed `VERIFY: CONNECTED` (an unreachable host, or a firewall that blocks the port). STOP. Do NOT enter the fix loop. The code is not the problem.
 
 **Bounded fix loop (exit 1 only).** Diagnose the captured output, fix the code, and re-run the same stage, up to 3 automatic attempts per stage. After the third failure, stop fixing: summarize exactly what you tried across the attempts and what the captured output shows, then hand the decision to the developer. Report the evidence, not just "it failed".
 

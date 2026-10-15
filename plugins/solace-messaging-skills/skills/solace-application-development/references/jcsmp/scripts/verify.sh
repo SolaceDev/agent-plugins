@@ -37,8 +37,9 @@
 #       precondition miss before any process starts (a usage error, or a missing
 #       pom.xml or verify-hooks.sh); stderr names which
 #   2 = environment failure (broker/credentials: a doc-traceable JCSMP error
-#       signature appeared in either process log; the code is not the problem,
-#       so the agent must NOT enter the fix loop)
+#       signature appeared in either process log, or the long-running role was
+#       still connecting at the readiness deadline with no VERIFY: CONNECTED; the
+#       code is not the problem, so the agent must NOT enter the fix loop)
 #
 # SIGINT delivery under `mvn exec:java` (the D-06 mechanism, why `set -m`):
 # in a NON-interactive shell without job control, a command started in the
@@ -284,6 +285,32 @@ TIMEOUT_S=30        # marker-watch deadline (Claude's discretion per CONTEXT)
 PUBLISH_WAIT_S=30   # foreground-publisher deadline before escalating to a code failure
 SHUTDOWN_WAIT_S=15  # bounded post-SIGINT wait before escalating to SIGTERM/SIGKILL
 
+# A long-running role that is still alive at the readiness deadline and never
+# printed VERIFY: CONNECTED is still connecting: an unreachable host or a blocked
+# port, where the connect attempt (and its retries) outlasts TIMEOUT_S without
+# logging an error. That is the environment, not the code, so exit 2.
+classify_stalled_connect() {  # <pid> <log> <ready 0|1>
+    if [ "$status" -ne 2 ] && [ "$3" -eq 0 ] && kill -0 "$1" 2>/dev/null && ! grep -qF "VERIFY: CONNECTED" "$2"; then
+        status=2
+        CONNECT_STALLED=1
+    fi
+}
+
+# Print the count of <marker> in <log> once it has stopped changing for 2 seconds
+# (bounded by TIMEOUT_S), so messages an earlier run left on a durable queue, which
+# arrive just after the bind, are all counted before the publisher starts.
+settled_count() {  # <log> <marker>
+    local n m settle_deadline=$(( SECONDS + TIMEOUT_S ))
+    n=$(grep -cF "$2" "$1" || true)
+    while [ "$SECONDS" -lt "$settle_deadline" ]; do
+        sleep 2
+        m=$(grep -cF "$2" "$1" || true)
+        [ "$m" -eq "$n" ] && break
+        n=$m
+    done
+    echo "$n"
+}
+
 # ── Bounded long-running shutdown (shared by the env-failure teardown and STAGE D) ─
 # Send SIGINT to the process GROUP of the PID passed as $1, poll up to
 # SHUTDOWN_WAIT_S for the JVM to exit on its own, then escalate SIGTERM then
@@ -385,6 +412,7 @@ trap cleanup EXIT
 status=1  # default to code failure until a stage milestone is confirmed
 DIRECT_ZERO_RECEIPT=0  # set by run_direct_stage when the at-most-once message dropped post-gate (D-05)
 RR_NO_REPLY=0  # set by run_request_reply_stage when the replier subscribed but no reply came back
+CONNECT_STALLED=0  # set when the long-running role was still connecting at the readiness deadline
 
 # ── run_guaranteed_stage: the guaranteed pub/sub flow (publisher|consumer|roundtrip) ─
 # The entire STAGE A..D body is lifted here VERBATIM (GEN-06 byte-stability): no
@@ -434,6 +462,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     fi
     sleep 1
 done
+classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$bound"
 
 # If the broker/credentials are wrong the subscriber already proved it; tear it
 # down (bounded, same SIGINT/SIGTERM/SIGKILL escalation as STAGE D) and classify
@@ -459,7 +488,7 @@ else
     if { [ "$STAGE" = "publisher" ] || [ "$STAGE" = "roundtrip" ]; } && [ "$bound" -eq 1 ]; then
         # A receipt already in the log is a message an earlier run left on the durable
         # queue, delivered at bind time; the round trip must see a receipt beyond these.
-        stale=$(grep -cF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG" || true)
+        stale=$(settled_count "$SUB_LOG" "VERIFY: MESSAGE_RECEIVED")
         [ "$stale" -eq 0 ] || echo "── $stale message(s) left on the queue by an earlier run arrived before the publisher started; they do not count ──" >&2
         echo "── Running publisher (mvn -q exec:java@publisher), watching for: VERIFY: PUBLISH_ACKED ──"
         set -m
@@ -615,6 +644,7 @@ run_direct_stage() {
         fi
         sleep 1
     done
+    classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$subscribed"
 
     if [ "$status" -eq 2 ]; then
         # Broker/credentials are wrong; tear the subscriber down (bounded) and
@@ -797,6 +827,7 @@ run_request_reply_stage() {
         fi
         sleep 1
     done
+    classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$subscribed"
 
     if [ "$status" -eq 2 ]; then
         # Broker/credentials are wrong; tear the replier down (bounded) and classify
@@ -859,7 +890,7 @@ run_request_reply_stage() {
         # A clean requestor run with no reply (subscription was confirmed, the requestor
         # ran and self-exited, but no VERIFY: REPLY_RECEIVED) stays status 1; the case-1
         # print is annotated with the no-reply caveat below. An env match already set 2.
-        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$pub_rc" -eq 0 ]; then
+        if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$pub_rc" -ne 124 ] && ! grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG"; then
             RR_NO_REPLY=1
         fi
 
@@ -960,7 +991,7 @@ run_app_stage() {
         # A PASS_MARKER already in the log (a backlog the app consumed at startup)
         # does not count; the trigger must produce a new one.
         local seen
-        seen=$(grep -cF "$PASS_MARKER" "$SUB_LOG" || true)
+        seen=$(settled_count "$SUB_LOG" "$PASS_MARKER")
         echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
         set -m
         bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
@@ -1014,6 +1045,13 @@ case "$STAGE" in
     *) echo "unknown stage: $STAGE" >&2; usage ;;
 esac
 
+# A connection error can be logged only after the stage gave up (for example during
+# the SIGINT teardown, while the API was still retrying the connect), so look for
+# the environment signatures again before classifying a code failure.
+if [ "$status" -eq 1 ] && { grep -qE "$ENV_SIGNATURES" "$SUB_LOG" || grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; }; then
+    status=2
+fi
+
 # ── Print the captured evidence, exit classified (the EXIT trap removes the ────
 # temp logs, V8) ─────────────────────────────────────────────────────────────────
 echo "── Captured subscriber output ──────────────────────────────────────"
@@ -1030,7 +1068,13 @@ case "$status" in
             echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the foreground role exited with status 0, the subscriber's shutdown hook ran ('$SHUTDOWN_LINE'), and the subscriber exited cleanly (exit 0 or 130)."
         fi
         ;;
-    2) echo "ENV FAILURE ($STAGE): a JCSMP connection/auth signature matched in a process log (broker or credentials are wrong, not the code). NOT entering the fix loop." >&2 ;;
+    2)
+        if [ "$CONNECT_STALLED" -eq 1 ]; then
+            echo "ENV FAILURE ($STAGE): the long-running role was still connecting to ${HOST:-the broker in config.json} after ${TIMEOUT_S}s and never printed VERIFY: CONNECTED. The host is unreachable or a firewall blocks the port (connect retries can stretch this). Check the host and port. NOT entering the fix loop." >&2
+        else
+            echo "ENV FAILURE ($STAGE): a JCSMP connection/auth signature matched in a process log (broker or credentials are wrong, not the code). NOT entering the fix loop." >&2
+        fi
+        ;;
     *)
         if [ "$DIRECT_ZERO_RECEIPT" -eq 1 ]; then
             echo "CODE FAILURE ($STAGE): the subscription was confirmed (VERIFY: SUBSCRIBED) and the direct publisher ran clean, but not one message of the burst was received (VERIFY: MESSAGE_RECEIVED never appeared). Direct messaging is at-most-once: a whole burst dropped after a confirmed subscription points at the topic subscription, the topic string, or a slow-consumer egress discard, not a transient race. Check that the subscriber's subscription matches the publisher's topic." >&2

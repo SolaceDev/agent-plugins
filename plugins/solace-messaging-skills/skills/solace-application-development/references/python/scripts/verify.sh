@@ -36,8 +36,9 @@
 #       precondition miss before any process starts (a usage error, or a missing
 #       script, .venv, config.json, or verify-hooks.sh). stderr names which.
 #   2 = environment failure (a Solace Python API connection, authentication, or
-#       TLS signature appeared in a process log; the code is not the problem, so
-#       the agent must NOT enter the fix loop)
+#       TLS signature appeared in a process log, or the long-running role was
+#       still connecting at the readiness deadline with no VERIFY: CONNECTED; the
+#       code is not the problem, so the agent must NOT enter the fix loop)
 #
 # The Python API has no guaranteed request-reply, so there is no
 # guaranteed-request-reply stage.
@@ -220,13 +221,14 @@ echo "── Live-run heads-up: stage '$STAGE' starts processes that connect to 
 #   wrong password    AuthenticationError, SOLCLIENT_SUBCODE_LOGIN_FAILURE
 #   wrong VPN         SOLCLIENT_SUBCODE_MSG_VPN_NOT_ALLOWED
 #   unresolvable host ServiceUnreachableError
+#   unroutable host   Session connect timeout (SOLCLIENT_SUBCODE_TIMEOUT, also used by non-connect timeouts)
 #   refused port      SOLCLIENT_SUBCODE_COMMUNICATION_ERROR
 #   no trust store    SOLCLIENT_SUBCODE_FAILED_LOADING_TRUSTSTORE
 #   wrong CA          SOLCLIENT_SUBCODE_UNTRUSTED_CERTIFICATE
 # AuthorizationError, CLIENT_USERNAME_IS_SHUTDOWN, and INVALID_VIRTUAL_ADDRESS are
 # the remaining broker rejections of a session. A match means the broker,
 # credentials, or trust store are wrong, NOT the code, so exit 2 bypasses the fix loop.
-ENV_SIGNATURES='AuthenticationError|AuthorizationError|ServiceUnreachableError|SOLCLIENT_SUBCODE_LOGIN_FAILURE|SOLCLIENT_SUBCODE_MSG_VPN_NOT_ALLOWED|SOLCLIENT_SUBCODE_CLIENT_USERNAME_IS_SHUTDOWN|SOLCLIENT_SUBCODE_INVALID_VIRTUAL_ADDRESS|SOLCLIENT_SUBCODE_COMMUNICATION_ERROR|SOLCLIENT_SUBCODE_FAILED_LOADING_TRUSTSTORE|SOLCLIENT_SUBCODE_UNTRUSTED_CERTIFICATE'
+ENV_SIGNATURES='AuthenticationError|AuthorizationError|ServiceUnreachableError|SOLCLIENT_SUBCODE_LOGIN_FAILURE|SOLCLIENT_SUBCODE_MSG_VPN_NOT_ALLOWED|SOLCLIENT_SUBCODE_CLIENT_USERNAME_IS_SHUTDOWN|SOLCLIENT_SUBCODE_INVALID_VIRTUAL_ADDRESS|SOLCLIENT_SUBCODE_COMMUNICATION_ERROR|SOLCLIENT_SUBCODE_FAILED_LOADING_TRUSTSTORE|SOLCLIENT_SUBCODE_UNTRUSTED_CERTIFICATE|Session connect timeout'
 
 # Every baked sample's signal handler prints this line on SIGINT. Seeing it in the
 # long-running role's log is the observable proof that the graceful shutdown ran.
@@ -240,6 +242,32 @@ ENDPOINT_DENIED='Could not bind to queue'
 TIMEOUT_S=30        # marker-watch deadline
 PUBLISH_WAIT_S=30   # foreground-role deadline before escalating to a code failure
 SHUTDOWN_WAIT_S=15  # bounded post-SIGINT wait before escalating to SIGTERM/SIGKILL
+
+# A long-running role that is still alive at the readiness deadline and never
+# printed VERIFY: CONNECTED is still connecting: an unreachable host or a blocked
+# port, where the connect attempt (and its retries) outlasts TIMEOUT_S without
+# logging an error. That is the environment, not the code, so exit 2.
+classify_stalled_connect() {  # <pid> <log> <ready 0|1>
+    if [ "$status" -ne 2 ] && [ "$3" -eq 0 ] && kill -0 "$1" 2>/dev/null && ! grep -qF "VERIFY: CONNECTED" "$2"; then
+        status=2
+        CONNECT_STALLED=1
+    fi
+}
+
+# Print the count of <marker> in <log> once it has stopped changing for 2 seconds
+# (bounded by TIMEOUT_S), so messages an earlier run left on a durable queue, which
+# arrive just after the bind, are all counted before the publisher starts.
+settled_count() {  # <log> <marker>
+    local n m settle_deadline=$(( SECONDS + TIMEOUT_S ))
+    n=$(grep -cF "$2" "$1" || true)
+    while [ "$SECONDS" -lt "$settle_deadline" ]; do
+        sleep 2
+        m=$(grep -cF "$2" "$1" || true)
+        [ "$m" -eq "$n" ] && break
+        n=$m
+    done
+    echo "$n"
+}
 
 # ── 1. py_compile first (a syntax error is a code failure, exit 1) ──────────────
 compile_project() {
@@ -284,6 +312,7 @@ trap cleanup EXIT
 status=1  # default to code failure until a stage milestone is confirmed
 DIRECT_ZERO_RECEIPT=0  # set when the at-most-once burst was lost after a confirmed subscription
 RR_NO_REPLY=0  # set when the replier subscribed but no reply came back
+CONNECT_STALLED=0  # set when the long-running role was still connecting at the readiness deadline
 
 # ── Launchers ──────────────────────────────────────────────────────────────────
 # `set -m` starts each role in its own process group, so the group-directed kills
@@ -391,6 +420,7 @@ run_guaranteed_stage() {
 
     local bound=0
     watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: QUEUE_BOUND" && bound=1
+    classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$bound"
     if [ "$status" -eq 2 ] || [ "$bound" -eq 0 ]; then
         shutdown_long_running "$SUB_PID"
         return
@@ -401,7 +431,7 @@ run_guaranteed_stage() {
     if [ "$STAGE" = "publisher" ] || [ "$STAGE" = "roundtrip" ]; then
         # A receipt already in the log is a message an earlier run left on the durable
         # queue, delivered at bind time; the round trip must see a receipt beyond these.
-        stale=$(grep -cF "VERIFY: MESSAGE_RECEIVED" "$SUB_LOG" || true)
+        stale=$(settled_count "$SUB_LOG" "VERIFY: MESSAGE_RECEIVED")
         [ "$stale" -eq 0 ] || echo "── $stale message(s) left on the queue by an earlier run arrived before the publisher started; they do not count ──" >&2
         echo "── Running publisher ($PUB_SCRIPT), watching for: VERIFY: PUBLISH_ACKED ──"
         start_role "$PUB_DIR" "$PUB_PY" "$PUB_SCRIPT" "$PUB_LOG"
@@ -437,7 +467,10 @@ run_direct_stage() {
     start_role "$SUB_DIR" "$SUB_PY" "$SUB_SCRIPT" "$SUB_LOG"
     SUB_PID=$LAUNCHED_PID
 
-    if ! watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: SUBSCRIBED"; then
+    local subscribed=0
+    watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: SUBSCRIBED" && subscribed=1
+    classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$subscribed"
+    if [ "$subscribed" -eq 0 ]; then
         shutdown_long_running "$SUB_PID"
         return
     fi
@@ -471,7 +504,10 @@ run_request_reply_stage() {
     start_role "$SUB_DIR" "$SUB_PY" "$SUB_SCRIPT" "$SUB_LOG"
     SUB_PID=$LAUNCHED_PID
 
-    if ! watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: SUBSCRIBED"; then
+    local subscribed=0
+    watch_marker "$SUB_LOG" "$SUB_PID" "VERIFY: SUBSCRIBED" && subscribed=1
+    classify_stalled_connect "$SUB_PID" "$SUB_LOG" "$subscribed"
+    if [ "$subscribed" -eq 0 ]; then
         shutdown_long_running "$SUB_PID"
         return
     fi
@@ -487,7 +523,7 @@ run_request_reply_stage() {
     elif [ "$fg_rc" -eq 0 ] && grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG" && grep -qF "VERIFY: REQUEST_RECEIVED" "$SUB_LOG"; then
         status=0
     fi
-    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$fg_rc" -eq 0 ]; then
+    if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$fg_rc" -ne 124 ] && ! grep -qF "VERIFY: REPLY_RECEIVED" "$PUB_LOG"; then
         RR_NO_REPLY=1
     fi
 
@@ -525,7 +561,7 @@ run_app_stage() {
         # A PASS_MARKER already in the log (a backlog the app consumed at startup)
         # does not count; the trigger must produce a new one.
         local seen
-        seen=$(grep -cF "$PASS_MARKER" "$SUB_LOG" || true)
+        seen=$(settled_count "$SUB_LOG" "$PASS_MARKER")
         echo "── Running trigger (TRIGGER_CMD from verify-hooks.sh), watching for: $PASS_MARKER ──"
         set -m
         bash -c "$TRIGGER_CMD" >"$PUB_LOG" 2>&1 &
@@ -546,6 +582,13 @@ case "$STAGE" in
     app)                           run_app_stage ;;
 esac
 
+# A connection error can be logged only after the stage gave up (for example during
+# the SIGINT teardown, while the API was still retrying the connect), so look for
+# the environment signatures again before classifying a code failure.
+if [ "$status" -eq 1 ] && { grep -qE "$ENV_SIGNATURES" "$SUB_LOG" || grep -qE "$ENV_SIGNATURES" "$PUB_LOG"; }; then
+    status=2
+fi
+
 # ── Print the captured evidence and exit classified (the EXIT trap removes the logs) ─
 echo "── Captured subscriber output ──────────────────────────────────────"
 cat "$SUB_LOG"
@@ -561,7 +604,13 @@ case "$status" in
             echo "PASS ($STAGE): the stage milestone was observed in the role's own log, the foreground role exited with status 0, the long-running role printed '$SHUTDOWN_LINE', and it exited with status 0."
         fi
         ;;
-    2) echo "ENV FAILURE ($STAGE): a Solace Python API connection, authentication, or TLS signature (or the queue bind denial) matched in a process log; the broker, credentials, trust store, or client permissions are wrong, not the code. NOT entering the fix loop." >&2 ;;
+    2)
+        if [ "$CONNECT_STALLED" -eq 1 ]; then
+            echo "ENV FAILURE ($STAGE): the long-running role was still connecting to ${TARGET_HOST:-the broker} after ${TIMEOUT_S}s and never printed VERIFY: CONNECTED. The host is unreachable or a firewall blocks the port (connect retries can stretch this). Check the host and port. NOT entering the fix loop." >&2
+        else
+            echo "ENV FAILURE ($STAGE): a Solace Python API connection, authentication, or TLS signature (or the queue bind denial) matched in a process log; the broker, credentials, trust store, or client permissions are wrong, not the code. NOT entering the fix loop." >&2
+        fi
+        ;;
     *)
         if [ "$DIRECT_ZERO_RECEIPT" -eq 1 ]; then
             echo "CODE FAILURE ($STAGE): the subscription was confirmed (VERIFY: SUBSCRIBED) and the direct publisher ran, but not one message of the burst was received (VERIFY: MESSAGE_RECEIVED never appeared). Direct messaging is at-most-once, but a whole burst lost after a confirmed subscription points at the topic subscription or the topic string. Check that the subscriber's subscription matches the publisher's topic." >&2
