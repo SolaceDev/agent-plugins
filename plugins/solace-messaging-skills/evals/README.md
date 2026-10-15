@@ -49,9 +49,10 @@ Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json
 - The `claude` CLI (Claude Code) on your PATH.
 - `jq` and `curl` on your PATH.
 - `mvn` (Apache Maven) with a JDK 11 or newer on your PATH. Only the cases that compile generated code need it, and the runner checks for it only when such a case is selected.
+- `python3` with the `venv` module and `pip`, for the cases that generate Solace Python projects. A generated Python project installs `solace-pubsubplus` into its own virtual environment, and its `verify.sh` runs that environment's interpreter.
 - An exported credential, either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`. An existing `claude` login does not satisfy this: the runner uses a throwaway config directory so that only the plugin under test is loaded, and that directory has no login. Claude seat holders can mint a token with `claude setup-token`.
 - `timeout` from GNU coreutils (or Homebrew's `gtimeout`) on your PATH, to cap each `mvn compile` and `verify.sh` run at 600 seconds. Optional: without it those steps run unbounded, and the runner prints a warning. On macOS, install it with `brew install coreutils`.
-- Network access to `repo1.maven.org` (Maven Central metadata and dependencies) and `docs.solace.com` (the skills fetch documentation pages).
+- Network access to `repo1.maven.org` (Maven Central metadata and dependencies), `pypi.org` and `files.pythonhosted.org` (the `solace-pubsubplus` release metadata and package), and `docs.solace.com` (the skills fetch documentation pages).
 - Optional: the four `OUTPUT_EVAL_BROKER_*` variables for the live round trip against a real broker (see below).
 - On macOS, `caffeinate` to keep the machine awake for a full leg.
 - On Windows, Git Bash. The repository's `.gitattributes` checks shell scripts out with LF endings, which bash and the byte-identity grader on `verify.sh` both need. A checkout made with `core.autocrlf=true` before that file existed keeps its CRLF copies, and git reports the tree clean because it treats them as unchanged, so `git pull` and `git checkout -- .` do not rewrite them. Re-clone, or delete the tracked scripts and check them out again: `git ls-files -z '*.sh' | xargs -0 rm -f && git checkout -- .`.

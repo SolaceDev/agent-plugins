@@ -35,4 +35,4 @@ The publisher only connects and publishes a short bounded burst of DIRECT messag
 
 ## The marker contract
 
-These three `VERIFY:` marker strings (`VERIFY: CONNECTED`, `VERIFY: SUBSCRIBED`, `VERIFY: MESSAGE_RECEIVED`) are the same strings the JCSMP Direct Pub/Sub leaf emits, character for character. They are read PER PROCESS: the subscriber output carries `SUBSCRIBED` and `MESSAGE_RECEIVED`, and both scripts print `CONNECTED`. Until the Python verify script lands, the developer reads them from the two terminals (`implement-mode.md` Step 5); the verify script will read the same strings, so never change one.
+These three `VERIFY:` marker strings (`VERIFY: CONNECTED`, `VERIFY: SUBSCRIBED`, `VERIFY: MESSAGE_RECEIVED`) are the same strings the JCSMP Direct Pub/Sub leaf emits, character for character. They are read PER PROCESS: the subscriber output carries `SUBSCRIBED` and `MESSAGE_RECEIVED`, and both scripts print `CONNECTED`. `verify.sh` reads these same strings in each process's own output (`implement-mode.md` Step 5), so never change one.

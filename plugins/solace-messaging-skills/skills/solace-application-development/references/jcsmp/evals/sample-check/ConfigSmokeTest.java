@@ -1,5 +1,5 @@
 /*
- * Runtime smoke test for SolaceConnectionConfig, driven by compile.sh.
+ * Runtime smoke test for SolaceConnectionConfig, driven by check-samples.sh.
  *
  * NOT a reference sample: compiling the helper never executes its config.json
  * parser or CLI-args fallback, so this tiny driver is compiled against the
@@ -9,7 +9,7 @@
  * value, blank CLI arg).
  *
  * One case per JVM invocation: the parser reads a CWD-relative config.json and
- * the fail-fast paths throw/exit, so compile.sh drives each case from its own
+ * the fail-fast paths throw/exit, so check-samples.sh drives each case from its own
  * working directory and checks the exit code. The case name is argv[0]; any
  * connection arguments the case needs are built here, not taken from argv.
  */
