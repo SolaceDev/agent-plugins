@@ -51,7 +51,7 @@ jobs:
   # missing license are warnings only. Also validate the Claude
   # plugin/marketplace manifests.
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -100,7 +100,7 @@ jobs:
 
   # CI-02: sweep the plugins/ tree for broken and soft-404 documentation links.
   link-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -110,7 +110,7 @@ jobs:
   # EVAL-02: compile the baked JCSMP samples verbatim against the live-resolved
   # sol-jcsmp. Pure compile gate, no API budget and no credential.
   jcsmp-sample-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -127,13 +127,13 @@ jobs:
   # resolvable host without a broker. Python has no compile step, so this is the
   # Python counterpart of jcsmp-sample-check. No API budget and no credential.
   python-sample-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: 3.x
+          python-version: '3.11'
       - name: Check baked Python samples
         run: ./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/sample-check/check-samples.sh
 
@@ -154,7 +154,7 @@ jobs:
   # re-enable the job once a key is allowed.
   trigger-evals:
     if: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 120                  # per model leg; 57 cases x 3 runs (~50 min observed)
     strategy:
       fail-fast: false                    # each model is an independent check
