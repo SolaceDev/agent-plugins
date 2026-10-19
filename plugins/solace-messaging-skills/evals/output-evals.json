@@ -61,9 +61,9 @@
       { "type": "file_exists", "glob": "solace-design.md", "expect": "present" },
       { "type": "file_grep", "glob": "pom.xml", "pattern": "<modules>|<parent>", "expect": "absent" },
       { "type": "compile" },
-      { "type": "maven_release_match" },
+      { "type": "release_match" },
       { "type": "live_verify" },
-      { "type": "java_disclaimer" },
+      { "type": "disclaimer" },
       { "type": "file_grep", "glob": "*.java", "pattern": "^import .*\\*;", "expect": "absent" },
       { "type": "file_grep", "glob": "pom.xml", "pattern": "com.solacesystems", "fixed": true, "expect": "present" },
       { "type": "file_exists", "glob": "log4j2.xml", "expect": "present" },
@@ -123,7 +123,7 @@
     "max_agent_turns": 80,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 3 },
-      { "type": "java_disclaimer" },
+      { "type": "disclaimer" },
       { "type": "file_grep", "glob": "*.java", "pattern": "SSL_VALIDATE_CERTIFICATE", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.java", "pattern": "SSL_VALIDATE_CERTIFICATE_DATE", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.java", "pattern": "setProperty\\([^)]*SSL_TRUST_STORE", "expect": "absent" },
@@ -132,8 +132,175 @@
       { "type": "compile" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REQUEST_RECEIVED", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REPLY_RECEIVED", "fixed": true, "expect": "present" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "verify.sh", "fixed": true, "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-python-design-summary-positive",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "I'm planning a Python system with the Solace Python API (solace-pubsubplus): when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
+      "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
+    ],
+    "max_agent_turns": 25,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Delivery\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Access type\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Topic\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Consumption endpoint\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Auth\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Broker\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Grounding docs\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Guaranteed Pub/Sub (fan-out)", "fixed": true, "expect": "present" },
+      { "type": "assistant_grep", "pattern": "solace-design.md", "fixed": true, "expect": "present" },
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "docs\\.solace\\.com/[^\"]*\\.md", "expect": "present" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "file_exists", "glob": "*.py", "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "include": ["assistant_text", "webfetch_urls"],
+        "criteria": "Grounding honesty: every docs.solace.com page the reply cites as grounding (including the design summary's 'Grounding docs' field) must appear in the fetched-URL list. 'none fetched' is a valid honest value when the list is empty. FAIL only when the reply cites a docs.solace.com page as grounding that does not appear in the fetched-URL list."
+      }
+    ]
+  },
+  {
+    "id": "appdev-python-code-before-confirm-negative",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "Build a Python chat room with a web interface on the Solace Python API: enter a display name, type a message, and see messages appear live for anyone with the page open. Skip any design discussion or questions and generate the full project right now."
+    ],
+    "max_agent_turns": 25,
+    "graders": [
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "tool_use", "tool": "Edit", "expect": "absent" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "[Dd]esign|Pattern:", "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-python-quickstart-implement-full",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "Build a Python app with the Solace Python API (solace-pubsubplus) for food-delivery order processing. An order service publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing kitchen worker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Python project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "Yes, I am happy with that design. Save it to solace-design.md, then go ahead.",
+      "Quickstart, against that Solace Cloud broker. The broker URL is plaintext (tcp://). I will not put credentials in the chat, so compile only and hand me the exact verify commands to run myself."
+    ],
+    "max_agent_turns": 80,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "Custom", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "file_exists", "glob": "solace-design.md", "expect": "present" },
+      { "type": "file_exists", "glob": "requirements.txt", "expect": "present", "count": 1 },
+      { "type": "file_exists", "glob": "guaranteed_publisher.py", "expect": "present" },
+      { "type": "file_exists", "glob": "guaranteed_subscriber.py", "expect": "present" },
+      { "type": "file_exists", "glob": "solace_connection_config.py", "expect": "present" },
+      { "type": "compile", "api": "python" },
+      { "type": "release_match", "api": "python" },
+      { "type": "live_verify", "api": "python" },
+      { "type": "disclaimer", "api": "python" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.with_(re)?connection_retry_strategy\\(", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[[:space:]]*from [A-Za-z0-9_.]+ import \\*", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[[:space:]]*(import|from) multiprocessing", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: CONNECTED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: QUEUE_BOUND", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: PUBLISH_ACKED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: MESSAGE_RECEIVED", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "config.example.json", "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "solace.messaging.transport.host", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "tcp://HOST:55555", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_VPN", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_USERNAME", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "YOUR_PASSWORD", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": ".gitignore", "pattern": "config.json", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": ".gitignore", "pattern": ".venv", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "verify.sh", "expect": "present", "identical_to": "plugins/solace-messaging-skills/skills/solace-application-development/references/python/scripts/verify.sh" },
+      { "type": "file_exists", "glob": "verify-hooks.sh", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^START_CMD=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^TRIGGER_CMD=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^READY_MARKER=", "expect": "present" },
+      { "type": "file_grep", "glob": "verify-hooks.sh", "pattern": "^PASS_MARKER=", "expect": "present" },
+      { "type": "file_exists", "glob": "solace-verification-checklist.md", "expect": "present" },
+      { "type": "tool_use", "tool": "*", "input_pattern": "pypi\\.org/pypi/solace-pubsubplus/json", "expect": "present" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "py_compile", "expect": "present" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" },
+      { "type": "assistant_grep", "pattern": "[Tt]rust[ -]?store", "expect": "present", "turn": 3 }
+    ]
+  },
+  {
+    "id": "appdev-python-debug-redirect-negative",
+    "skill": "solace-application-development",
+    "must_pass": true,
+    "user_turns": [
+      "My food-delivery kitchen worker uses the Solace Python API (solace-pubsubplus), and its PersistentMessageReceiver now fails to start with a PubSubPlusClientError saying it could not bind to the queue. Walk me through debugging this step by step."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "https://docs.solace.com/API/Messaging-APIs/Python-API/python-home.md", "fixed": true, "expect": "present" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      {
+        "type": "llm_judge",
+        "criteria": "The user asked for step-by-step debugging of a Solace Python API error. The skill's contract says the documentation redirect is the ENTIRE debug answer: acknowledge the problem, link the canonical Solace Python API documentation, and stop. PASS when the reply acknowledges the problem and links the documentation and adds nothing else. Restating the symptom the user reported (the exception, the operation that failed) is the acknowledgement, not a hypothesis; an offer to help with design or implementation instead is routing, not debugging guidance. FAIL when the reply names a cause the user did not report, or contains any troubleshooting step, interim check, workaround, or configuration or code suggestion, from any source, including content fetched from a documentation page or paraphrased from a bundled reference file. Restating the rule does not excuse guidance that follows it."
+      }
+    ]
+  },
+  {
+    "id": "appdev-python-suggested-secure",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "Build a Python app with the Solace Python API (solace-pubsubplus) for food-delivery order processing: an order service publishes customer orders and a kitchen worker processes them. No order may be lost, even if the kitchen worker restarts. Plain Python, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Guaranteed Pub/Sub (single service, exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "Yes, I am happy with that design. No need to save it, go ahead.",
+      "Solace Suggested, against that Solace Cloud broker.",
+      "No HA failover needed. I will put the broker's CA certificate into a trust store directory myself. I will not share credentials in the chat; compile only and hand me the commands to run myself."
+    ],
+    "max_agent_turns": 80,
+    "graders": [
+      { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 3 },
+      { "type": "assistant_grep", "pattern": "ght_client_certs.md", "fixed": true, "expect": "present" },
+      { "type": "disclaimer", "api": "python" },
+      { "type": "file_exists", "glob": "requirements.txt", "expect": "present", "count": 2 },
+      { "type": "file_exists", "glob": "verify.sh", "expect": "present", "count": 2, "identical_to": "plugins/solace-messaging-skills/skills/solace-application-development/references/python/scripts/verify.sh" },
+      { "type": "file_exists", "glob": "solace-verification-checklist.md", "expect": "present", "count": 2 },
+      { "type": "compile", "api": "python" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "CERT_VALIDATED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "CERT_REJECT_EXPIRED", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "CERT_VALIDATE_SERVERNAME", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*(CERT_VALIDATED|CERT_REJECT_EXPIRED|CERT_VALIDATE_SERVERNAME)\\]?[[:space:]]*[:=][[:space:]]*False", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.without_certificate_validation\\(", "expect": "absent" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "PERSISTENT_DMQ_ELIGIBLE", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.with_reconnection_retry_strategy\\(", "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*(\\.with_connection_retry_strategy\\(|CONNECTION_RETRIES_PER_HOST)", "expect": "absent" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "tcps://", "fixed": true, "expect": "all_files" },
+      { "type": "file_grep", "glob": "config.example.json", "pattern": "solace.messaging.tls.trust-store-path", "fixed": true, "expect": "all_files" },
+      { "type": "file_grep", "glob": ".gitignore", "pattern": "config.json", "fixed": true, "expect": "all_files" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: QUEUE_BOUND", "fixed": true, "expect": "present" },
+      { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: PUBLISH_ACKED", "fixed": true, "expect": "present" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "--subscriber-dir", "fixed": true, "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-python-persisted-request-routing",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "I'm designing a Python system with the Solace Python API where a pharmacy service requests refill authorization from a doctor's-office service and waits for the answer. The refill request must not be lost, even when the doctor's-office service is down at the moment it is sent. Right now I only want help designing the Solace messaging pattern and topology, not the code.",
+      "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
+    ],
+    "max_agent_turns": 25,
+    "graders": [
+      { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Python-API-Request-Reply\\.md", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Guaranteed Pub/Sub \\(", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Request-Reply", "expect": "absent" },
+      { "type": "assistant_grep", "pattern": "[Cc]orrelation", "expect": "present" },
+      { "type": "tool_use", "tool": "Write", "expect": "absent" },
+      { "type": "file_exists", "glob": "*", "expect": "absent" }
     ]
   },
   {

@@ -44,20 +44,31 @@
 #                       tool, input_pattern, exclude_pattern (drop matches of
 #                       this ERE before counting), expect, count, turn.
 #   file_exists         find generated files by basename glob under the case
-#                       work dir (target/ excluded). Fields: glob, expect,
-#                       identical_to (repo-relative path; every match must be
-#                       byte-identical to it).
+#                       work dir (target/, .venv/, and __pycache__/
+#                       excluded). Fields: glob, expect, count (exact number
+#                       of matches), identical_to (repo-relative path; every
+#                       match must be byte-identical to it).
 #   file_grep           grep files matched by basename glob. Fields: glob,
 #                       pattern, expect (present|absent|all_files), fixed.
-#   java_disclaimer     every generated .java starts with the AI-assisted
+#   disclaimer          every generated source file of the API (.java for
+#                       jcsmp, .py for python) starts with the AI-assisted
 #                       disclaimer line and the checklist pointer; fails when
-#                       no .java exists. No fields.
-#   compile             `mvn -q -B compile` on every generated pom.xml; all
-#                       must exit 0. Bounded at 600s when GNU timeout (or
-#                       gtimeout) is on PATH; unbounded, with a warning,
-#                       otherwise. No fields.
-#   maven_release_match every generated pom carries the live sol-jcsmp
-#                       <release> from repo1.maven.org metadata. No fields.
+#                       no such file exists. Fields: api (jcsmp|python,
+#                       default jcsmp).
+#   compile             jcsmp: `mvn -q -B compile` on every generated
+#                       pom.xml. python: for every generated requirements.txt,
+#                       a fresh venv outside the project, `pip install -r`,
+#                       py_compile of every .py in the project, and an import
+#                       smoke of every top-level module. All must succeed.
+#                       Each mvn or pip run is bounded at 600s when GNU
+#                       timeout (or gtimeout) is on PATH; unbounded, with a
+#                       warning, otherwise. Fields: api (jcsmp|python,
+#                       default jcsmp).
+#   release_match       jcsmp: every generated pom carries the live sol-jcsmp
+#                       <release> from repo1.maven.org metadata. python:
+#                       every generated requirements.txt pins
+#                       solace-pubsubplus to the live PyPI info.version.
+#                       Fields: api (jcsmp|python, default jcsmp).
 #   llm_judge           one tool-free judge completion on
 #                       OUTPUT_EVAL_JUDGE_MODEL returning a strict
 #                       {"verdict","reason"} JSON. Fields: criteria, include
@@ -69,7 +80,11 @@
 #                       verify.sh exit 0 passes; exit 2 (a doc-traceable
 #                       broker or credential error) and a timeout kill are
 #                       INFRA; anything else fails. Skips, and says so, when
-#                       no broker is configured. No fields.
+#                       no broker is configured. Fields: api (jcsmp|python,
+#                       default jcsmp). JCSMP gets the broker values as CLI
+#                       args; a Python project gets them in a config.json
+#                       the runner writes after the subject model finishes,
+#                       because a tcps:// host needs the trust store key.
 #
 # RUNS: output cases are expensive (a full Implement flow runs 30+ turns plus
 # Maven), so OUTPUT_EVAL_RUNS defaults to 1. Set it higher for a majority-vote
@@ -101,8 +116,12 @@
 #   OUTPUT_EVAL_BROKER_HOST, OUTPUT_EVAL_BROKER_VPN, OUTPUT_EVAL_BROKER_USER,
 #   OUTPUT_EVAL_BROKER_PASSWORD, when exported, enable the live_verify grader
 #   (host as tcp://<host>:55555). Export all four or none: a partial set is
-#   an error. The values reach only verify.sh, as CLI args, never the
-#   subject model.
+#   an error. The values reach only verify.sh (as CLI args, or in the
+#   config.json written for a Python project), never the subject model.
+#   OUTPUT_EVAL_BROKER_TRUST_STORE, a directory holding the broker's CA
+#   certificate as a PEM file, is required when the host is tcps:// and a
+#   selected case runs a Python live_verify; the Python API has no default
+#   trust store.
 
 set -uo pipefail
 export LC_ALL=C
@@ -112,7 +131,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNS="${OUTPUT_EVAL_RUNS:-1}"
 MODEL="${OUTPUT_EVAL_MODEL:-claude-sonnet-5}"
 JUDGE_MODEL="${OUTPUT_EVAL_JUDGE_MODEL:-claude-sonnet-5}"
-GRADER_TYPES='["assistant_grep","tool_use","file_exists","file_grep","java_disclaimer","compile","maven_release_match","llm_judge","live_verify"]'
+GRADER_TYPES='["assistant_grep","tool_use","file_exists","file_grep","disclaimer","compile","release_match","llm_judge","live_verify"]'
 # Headless -p denies tools outside --allowedTools, which would distort the
 # measured behavior, so the subject gets the full list the skills declare. Bash
 # is unrestricted by design (agreed for this local-only suite); every invocation
@@ -175,7 +194,15 @@ else
   echo "ERROR: partial broker configuration: export all four OUTPUT_EVAL_BROKER_* variables or none (missing: ${missing[*]})." >&2
   exit 1
 fi
-export -n "${BROKER_VARS[@]}"
+# The trust store directory is outside the all-or-none count: only a Python
+# live_verify against a tcps:// host needs it, and the per-plugin preflight
+# below fails closed when such a case is selected without it.
+TRUST_STORE="${OUTPUT_EVAL_BROKER_TRUST_STORE:-}"
+if [[ -n "$TRUST_STORE" ]]; then
+  [[ -d "$TRUST_STORE" ]] || { echo "ERROR: OUTPUT_EVAL_BROKER_TRUST_STORE is not a directory: $TRUST_STORE" >&2; exit 1; }
+  TRUST_STORE="$(cd "$TRUST_STORE" && pwd)"
+fi
+export -n "${BROKER_VARS[@]}" OUTPUT_EVAL_BROKER_TRUST_STORE
 
 # in_filter <id>: 0 when no filter is set or the id is listed.
 in_filter() {
@@ -287,18 +314,28 @@ granted() {
 }
 
 # find_files <basename-glob>: generated files under the work dir, excluding
-# Maven build output. "*" means any file.
+# Maven build output and Python environments and bytecode. "*" means any file.
 find_files() {
-  find "$WORK" -type f -name "$1" -not -path '*/target/*' 2>/dev/null
+  find "$WORK" -type f -name "$1" -not -path '*/target/*' -not -path '*/.venv/*' -not -path '*/__pycache__/*' 2>/dev/null
 }
 
-shallowest_pom() {
-  find_files pom.xml | awk -F/ '{print NF, $0}' | sort -n | head -1 | cut -d' ' -f2-
+# shallowest <basename>: the matching generated file nearest the work dir root.
+shallowest() {
+  find_files "$1" | awk -F/ '{print NF, $0}' | sort -n | head -1 | cut -d' ' -f2-
 }
 
 resolve_sol_jcsmp_release() {
   curl -s --max-time 20 https://repo1.maven.org/maven2/com/solacesystems/sol-jcsmp/maven-metadata.xml \
     | grep -oE '<release>[^<]+</release>' | sed -E 's/<\/?release>//g'
+}
+
+resolve_solace_pubsubplus_release() {
+  curl -s --max-time 20 https://pypi.org/pypi/solace-pubsubplus/json | jq -r '.info.version // empty' 2>/dev/null
+}
+
+# bounded <cmd...>: run under the 600s timeout when one is available.
+bounded() {
+  if [[ -n "$TIMEOUT_BIN" ]]; then "$TIMEOUT_BIN" 600 "$@"; else "$@"; fi
 }
 
 # --- graders ----------------------------------------------------------------
@@ -354,9 +391,10 @@ grade_one() {
       fi ;;
 
     file_exists)
-      local glob expect ident files f ok=1
+      local glob expect count ident files f m ok=1
       glob="$(jq -r '.glob' <<<"$g")"
       expect="$(jq -r '.expect // "present"' <<<"$g")"
+      count="$(jq -r '.count // ""' <<<"$g")"
       ident="$(jq -r '.identical_to // ""' <<<"$g")"
       files="$(find_files "$glob")"
       if [[ "$expect" == "absent" ]]; then
@@ -364,6 +402,10 @@ grade_one() {
         GRADER_DETAIL="forbidden file(s) on disk matching $glob: $(head -3 <<<"$files" | tr '\n' ' ')"; return 1
       fi
       [[ -z "$files" ]] && { GRADER_DETAIL="no file matching $glob was generated"; return 1; }
+      if [[ -n "$count" ]]; then
+        m="$(grep -c . <<<"$files")"
+        [[ "$m" -eq "$count" ]] || { GRADER_DETAIL="$m file(s) matching $glob, expected $count"; return 1; }
+      fi
       if [[ -n "$ident" ]]; then
         while IFS= read -r f; do
           cmp -s "$f" "$REPO_ROOT/$ident" || { ok=0; GRADER_DETAIL="$f is not byte-identical to $ident"; }
@@ -400,10 +442,18 @@ grade_one() {
           GRADER_DETAIL="$miss lacks: $pattern"; return 1 ;;
       esac ;;
 
-    java_disclaimer)
-      local files f bad=""
-      files="$(find_files '*.java')"
-      [[ -z "$files" ]] && { GRADER_DETAIL="no .java files were generated"; return 1; }
+    disclaimer)
+      # The header text is the same in both APIs; only the comment prefix
+      # (// or #) differs, so a fixed-string match covers both.
+      local api ext files f bad=""
+      api="$(jq -r '.api // "jcsmp"' <<<"$g")"
+      case "$api" in
+        jcsmp) ext=java ;;
+        python) ext=py ;;
+        *) GRADER_DETAIL="unknown disclaimer api '$api'"; return 2 ;;
+      esac
+      files="$(find_files "*.$ext")"
+      [[ -z "$files" ]] && { GRADER_DETAIL="no .$ext files were generated"; return 1; }
       while IFS= read -r f; do
         head -3 "$f" | grep -qF 'AI-assisted code. Review before production use.' || bad="$f (missing disclaimer line)"
         head -4 "$f" | grep -qF 'See the verification checklist: solace-verification-checklist.md' || bad="$f (missing checklist pointer)"
@@ -412,9 +462,36 @@ grade_one() {
       GRADER_DETAIL="$bad"; return 1 ;;
 
     compile)
+      local api poms pom reqs req proj venv mods rc n=0 log
+      api="$(jq -r '.api // "jcsmp"' <<<"$g")"
+      if [[ "$api" == "python" ]]; then
+        # One fresh venv per project, built outside the work dir from the
+        # project's own requirements.txt, so the verdict never depends on the
+        # .venv the subject model created. Every requirements.txt is a project
+        # root, so a two-project layout (Solace Suggested) is proven whole.
+        reqs="$(find_files requirements.txt)"
+        [[ -z "$reqs" ]] && { GRADER_DETAIL="no generated requirements.txt to install"; return 1; }
+        while IFS= read -r req; do
+          n=$((n + 1)); proj="$(dirname "$req")"; venv="$RUN_DIR/pyvenv-$n"; log="$RUN_DIR/py-compile-$n.log"
+          python3 -m venv "$venv" > "$log" 2>&1 \
+            || { GRADER_DETAIL="python3 -m venv failed, log: $log"; return 2; }
+          bounded "$venv/bin/pip" install -q -r "$req" >> "$log" 2>&1; rc=$?
+          [[ "$rc" -eq 124 ]] && { GRADER_DETAIL="pip install for $req timed out after 600s, log: $log"; return 2; }
+          [[ "$rc" -eq 0 ]] || { GRADER_DETAIL="pip install -r $req failed (exit $rc), log: $log"; return 1; }
+          mods="$(find "$proj" -maxdepth 1 -type f -name '*.py' -exec basename {} .py \; | sort | paste -sd, -)"
+          [[ -z "$mods" ]] && { GRADER_DETAIL="no .py file beside $req"; return 1; }
+          ( cd "$proj" && find . -name '*.py' -not -path './.venv/*' -print0 \
+              | xargs -0 "$venv/bin/python" -m py_compile ) >> "$log" 2>&1 \
+            || { GRADER_DETAIL="py_compile failed in $proj, log: $log"; return 1; }
+          # Each generated script keeps its __main__ guard, so importing it
+          # resolves every solace.messaging name without connecting.
+          ( cd "$proj" && "$venv/bin/python" -c "import ${mods//,/, }" ) >> "$log" 2>&1 \
+            || { GRADER_DETAIL="import smoke of $mods failed in $proj, log: $log"; return 1; }
+        done <<<"$reqs"
+        return 0
+      fi
       # Every generated pom compiles, so a two-project layout (Solace Suggested)
       # is proven whole, not by whichever pom sorts first.
-      local poms pom rc n=0 log
       poms="$(find_files pom.xml)"
       [[ -z "$poms" ]] && { GRADER_DETAIL="no generated pom.xml to compile"; return 1; }
       while IFS= read -r pom; do
@@ -430,8 +507,19 @@ grade_one() {
       done <<<"$poms"
       return 0 ;;
 
-    maven_release_match)
-      local rel poms pom
+    release_match)
+      local api rel poms pom reqs req
+      api="$(jq -r '.api // "jcsmp"' <<<"$g")"
+      if [[ "$api" == "python" ]]; then
+        rel="$(resolve_solace_pubsubplus_release)"
+        [[ -z "$rel" ]] && { GRADER_DETAIL="could not resolve solace-pubsubplus info.version from pypi.org"; return 2; }
+        reqs="$(find_files requirements.txt)"
+        [[ -z "$reqs" ]] && { GRADER_DETAIL="no generated requirements.txt to check against release $rel"; return 1; }
+        while IFS= read -r req; do
+          grep -qxF "solace-pubsubplus==$rel" "$req" || { GRADER_DETAIL="$req does not pin the live solace-pubsubplus release $rel"; return 1; }
+        done <<<"$reqs"
+        return 0
+      fi
       rel="$(resolve_sol_jcsmp_release)"
       [[ -z "$rel" ]] && { GRADER_DETAIL="could not resolve sol-jcsmp <release> from repo1.maven.org"; return 2; }
       poms="$(find_files pom.xml)"
@@ -483,18 +571,28 @@ grade_one() {
       GRADER_DETAIL="judge verdict unparseable after 2 attempts ($jfile)"; return 2 ;;
 
     live_verify)
-      local pom proj log rc
+      local api anchor build proj log rc
       if [[ "$LIVE_VERIFY" != "run" ]]; then LIVE_SKIPPED=1; return 0; fi
-      pom="$(shallowest_pom)"
-      [[ -z "$pom" ]] && { GRADER_DETAIL="no generated pom.xml to verify against the broker"; return 1; }
-      proj="$(dirname "$pom")"
-      [[ -f "$proj/verify.sh" ]] || { GRADER_DETAIL="no verify.sh beside $pom"; return 1; }
+      api="$(jq -r '.api // "jcsmp"' <<<"$g")"
+      if [[ "$api" == "python" ]]; then build=requirements.txt; else build=pom.xml; fi
+      anchor="$(shallowest "$build")"
+      [[ -z "$anchor" ]] && { GRADER_DETAIL="no generated $build to verify against the broker"; return 1; }
+      proj="$(dirname "$anchor")"
+      [[ -f "$proj/verify.sh" ]] || { GRADER_DETAIL="no verify.sh beside $anchor"; return 1; }
       log="$RUN_DIR/live-verify.log"
       LIVE_RAN=1
-      if [[ -n "$TIMEOUT_BIN" ]]; then
-        ( cd "$proj" && "$TIMEOUT_BIN" 600 bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
+      if [[ "$api" == "python" ]]; then
+        # The subject model has finished, so the values written here never
+        # reach it. The Python verify.sh refuses CLI args beside a config.json,
+        # and this file replaces any placeholder copy the model left behind.
+        ( umask 077 && jq -n --arg h "$OUTPUT_EVAL_BROKER_HOST" --arg v "$OUTPUT_EVAL_BROKER_VPN" \
+            --arg u "$OUTPUT_EVAL_BROKER_USER" --arg p "$OUTPUT_EVAL_BROKER_PASSWORD" --arg t "$TRUST_STORE" \
+            '{"solace.messaging.transport.host": $h, "solace.messaging.service.vpn-name": $v,
+              "solace.messaging.authentication.basic.username": $u, "solace.messaging.authentication.basic.password": $p}
+             + (if $t == "" then {} else {"solace.messaging.tls.trust-store-path": $t} end)' > "$proj/config.json" )
+        ( cd "$proj" && bounded bash ./verify.sh roundtrip ) > "$log" 2>&1; rc=$?
       else
-        ( cd "$proj" && bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
+        ( cd "$proj" && bounded bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
       fi
       case "$rc" in
         0) return 0 ;;
@@ -559,20 +657,33 @@ for evals_file in "$REPO_ROOT"/plugins/*/evals/output-evals.json; do
   # Maven is only required when a selected case compiles, checks the pom, or
   # runs verify.sh. The live-verify banner prints before any case starts so the
   # operator sees the broker state in the first seconds, not at the end of the run.
-  needs_mvn=0; needs_live=0
+  needs_mvn=0; needs_py=0; needs_live=0; needs_live_py=0
   while IFS= read -r row; do
     cid="$(jq -r '.id' <<<"$row")"
     in_filter "$cid" || continue
-    jq -e '.graders | any(.type=="compile" or .type=="maven_release_match" or .type=="live_verify")' <<<"$row" >/dev/null 2>&1 && needs_mvn=1
+    jq -e '.graders | any((.type=="compile" or .type=="release_match" or .type=="live_verify") and (.api // "jcsmp")=="jcsmp")' <<<"$row" >/dev/null 2>&1 && needs_mvn=1
+    jq -e '.graders | any((.type=="compile" or .type=="live_verify") and .api=="python")' <<<"$row" >/dev/null 2>&1 && needs_py=1
     jq -e '.graders | any(.type=="live_verify")' <<<"$row" >/dev/null 2>&1 && needs_live=1
+    jq -e '.graders | any(.type=="live_verify" and .api=="python")' <<<"$row" >/dev/null 2>&1 && needs_live_py=1
   done < <(jq -c '.[]' "$evals_file")
   if [[ "$needs_mvn" -eq 1 ]] && ! command -v mvn >/dev/null 2>&1; then
-    echo "ERROR: 'mvn' is not on PATH and a selected case carries a compile, maven_release_match, or live_verify grader." >&2
+    echo "ERROR: 'mvn' is not on PATH and a selected case carries a JCSMP compile, release_match, or live_verify grader." >&2
     rm -rf "$CLAUDE_CONFIG_DIR" "$WORKDIR"
     exit 1
   fi
-  if [[ "$needs_mvn" -eq 1 && -z "$TIMEOUT_BIN" ]]; then
-    echo "WARNING: neither 'timeout' nor 'gtimeout' is on PATH; mvn compile and verify.sh run unbounded (install GNU coreutils to cap them at 600s)." >&2
+  if [[ "$needs_py" -eq 1 ]] && ! python3 -m venv --help >/dev/null 2>&1; then
+    echo "ERROR: 'python3' with the venv module is not on PATH and a selected case carries a Python compile or Python live_verify grader." >&2
+    rm -rf "$CLAUDE_CONFIG_DIR" "$WORKDIR"
+    exit 1
+  fi
+  if [[ "$needs_live_py" -eq 1 && "$LIVE_VERIFY" == "run" && -z "$TRUST_STORE" ]] \
+     && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$OUTPUT_EVAL_BROKER_HOST")" == tcps://* ]]; then
+    echo "ERROR: OUTPUT_EVAL_BROKER_HOST is tcps:// and a selected case runs a Python live_verify: export OUTPUT_EVAL_BROKER_TRUST_STORE (a directory holding the broker's CA certificate as a PEM file)." >&2
+    rm -rf "$CLAUDE_CONFIG_DIR" "$WORKDIR"
+    exit 1
+  fi
+  if [[ "$needs_mvn" -eq 1 || "$needs_py" -eq 1 ]] && [[ -z "$TIMEOUT_BIN" ]]; then
+    echo "WARNING: neither 'timeout' nor 'gtimeout' is on PATH; mvn compile, pip install, and verify.sh run unbounded (install GNU coreutils to cap them at 600s)." >&2
   fi
   if [[ "$needs_live" -eq 1 ]]; then
     LIVE_NEEDED=1
