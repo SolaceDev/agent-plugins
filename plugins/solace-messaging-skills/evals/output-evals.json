@@ -89,7 +89,7 @@
       { "type": "tool_use", "tool": "*", "input_pattern": "repo1\\.maven\\.org/maven2/com/solacesystems/sol-jcsmp/maven-metadata\\.xml", "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "solrsearch|search\\.maven\\.org", "expect": "absent" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app)", "exclude_pattern": "<<-? *(\\\\\\\\\"|')?[A-Z_]+(\\\\\\\\\"|')?([^\\\\]|\\\\\\\\[^n])*(\\\\\\\\n([A-Z_]*([^\\\\A-Z_]|\\\\\\\\[^n])([^\\\\]|\\\\\\\\[^n])*)?)*\\\\\\\\n([^\\\\]|\\\\\\\\[^n])*verify\\.sh +(consumer|publisher|roundtrip|app)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" }
     ]
   },
@@ -132,7 +132,7 @@
       { "type": "compile" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REQUEST_RECEIVED", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REPLY_RECEIVED", "fixed": true, "expect": "present" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "exclude_pattern": "<<-? *(\\\\\\\\\"|')?[A-Z_]+(\\\\\\\\\"|')?([^\\\\]|\\\\\\\\[^n])*(\\\\\\\\n([A-Z_]*([^\\\\A-Z_]|\\\\\\\\[^n])([^\\\\]|\\\\\\\\[^n])*)?)*\\\\\\\\n([^\\\\]|\\\\\\\\[^n])*verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "verify.sh", "fixed": true, "expect": "present" }
     ]
   },
@@ -228,7 +228,7 @@
       { "type": "file_exists", "glob": "solace-verification-checklist.md", "expect": "present" },
       { "type": "tool_use", "tool": "*", "input_pattern": "pypi\\.org/pypi/solace-pubsubplus/json", "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "py_compile", "expect": "present" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<-? *(\\\\\\\\\"|')?[A-Z_]+(\\\\\\\\\"|')?([^\\\\]|\\\\\\\\[^n])*(\\\\\\\\n([A-Z_]*([^\\\\A-Z_]|\\\\\\\\[^n])([^\\\\]|\\\\\\\\[^n])*)?)*\\\\\\\\n([^\\\\]|\\\\\\\\[^n])*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" },
       { "type": "assistant_grep", "pattern": "[Tt]rust[ -]?store", "expect": "present", "turn": 3 }
     ]
@@ -282,7 +282,7 @@
       { "type": "file_grep", "glob": ".gitignore", "pattern": "config.json", "fixed": true, "expect": "all_files" },
       { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: QUEUE_BOUND", "fixed": true, "expect": "present" },
       { "type": "file_grep", "glob": "*.py", "pattern": "VERIFY: PUBLISH_ACKED", "fixed": true, "expect": "present" },
-      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<.*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
+      { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "exclude_pattern": "<<-? *(\\\\\\\\\"|')?[A-Z_]+(\\\\\\\\\"|')?([^\\\\]|\\\\\\\\[^n])*(\\\\\\\\n([A-Z_]*([^\\\\A-Z_]|\\\\\\\\[^n])([^\\\\]|\\\\\\\\[^n])*)?)*\\\\\\\\n([^\\\\]|\\\\\\\\[^n])*verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "--subscriber-dir", "fixed": true, "expect": "present" }
     ]
   },

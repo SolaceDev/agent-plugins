@@ -589,8 +589,11 @@ grade_one() {
             --arg u "$OUTPUT_EVAL_BROKER_USER" --arg p "$OUTPUT_EVAL_BROKER_PASSWORD" --arg t "$TRUST_STORE" \
             '{"solace.messaging.transport.host": $h, "solace.messaging.service.vpn-name": $v,
               "solace.messaging.authentication.basic.username": $u, "solace.messaging.authentication.basic.password": $p}
-             + (if $t == "" then {} else {"solace.messaging.tls.trust-store-path": $t} end)' > "$proj/config.json" )
+             + (if $t == "" then {} else {"solace.messaging.tls.trust-store-path": $t} end)' > "$proj/config.json" ) \
+          || { rm -f "$proj/config.json"; GRADER_DETAIL="could not write $proj/config.json"; return 2; }
         ( cd "$proj" && bounded bash ./verify.sh roundtrip ) > "$log" 2>&1; rc=$?
+        # A kept WORKDIR must not hold the broker password.
+        rm -f "$proj/config.json"
       else
         ( cd "$proj" && bounded bash ./verify.sh roundtrip "$OUTPUT_EVAL_BROKER_HOST" "$OUTPUT_EVAL_BROKER_VPN" "$OUTPUT_EVAL_BROKER_USER" "$OUTPUT_EVAL_BROKER_PASSWORD" ) > "$log" 2>&1; rc=$?
       fi
