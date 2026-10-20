@@ -106,6 +106,7 @@
         "tool": { "type": "string", "minLength": 1, "description": "Tool name to match (Write, Edit, Bash, WebFetch, Skill, ...). \"*\" matches every tool." },
         "input_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression that the compact input JSON must match for the event to count." },
         "exclude_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression; matching events are dropped before counting. Use it to allow a specific benign match inside an otherwise absent check." },
+        "ignore_heredoc_bodies": { "type": "boolean", "description": "Strip heredoc bodies from a string command input (through each terminator line) before matching, so text written to a file through a heredoc does not count as a command the shell runs." },
         "expect": { "$ref": "#/$defs/expect_presence" },
         "count": { "type": "integer", "minimum": 0, "description": "With expect present: the exact number of matching events required. Omit to require at least one." },
         "turn": { "$ref": "#/$defs/turn_scope" }

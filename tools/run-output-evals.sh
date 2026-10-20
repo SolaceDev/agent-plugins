@@ -42,7 +42,9 @@
 #   tool_use            match tool_use events by tool name (or "*") and an
 #                       optional ERE over the compact input JSON. Fields:
 #                       tool, input_pattern, exclude_pattern (drop matches of
-#                       this ERE before counting), expect, count, turn.
+#                       this ERE before counting), ignore_heredoc_bodies
+#                       (strip heredoc bodies from Bash commands before
+#                       matching), expect, count, turn.
 #   file_exists         find generated files by basename glob under the case
 #                       work dir (target/, .venv/, and __pycache__/
 #                       excluded). Fields: glob, expect, count (exact number
@@ -237,11 +239,32 @@ assistant_text() { # <turn|all>
   done < <(turn_files "$1")
 }
 
-tool_events() { # <turn|all>: one "name<TAB>compact-input-json" line per tool_use
+# strip_heredoc_bodies: drop each heredoc body (<<WORD, <<-WORD, <<'WORD',
+# <<"WORD") through its terminator line, keeping every line the shell runs.
+# [^<] keeps <<< here-strings out; \k<q> makes a quoted delimiter close with
+# the same quote; <<- accepts a tab-indented terminator. Known limits: a
+# <<WORD inside a quoted string starts a false heredoc, and only the first
+# heredoc on a line is tracked.
+JQ_STRIP_HEREDOCS='
+def strip_heredoc_bodies:
+  reduce split("\n")[] as $l ({out: [], term: null, tabs: false};
+    if .term != null then
+      if (if .tabs then ($l | sub("^\t+"; "")) else $l end) == .term then .term = null else . end
+    else
+      .out += [$l]
+      | ($l | capture("(^|[^<])<<(?<dash>-?)[ \t]*(?<q>[\\x27\"]?)(?<w>[A-Za-z_][A-Za-z0-9_]*)\\k<q>") // null) as $m
+      | if $m != null then .term = $m.w | .tabs = ($m.dash == "-") else . end
+    end)
+  | .out | join("\n");'
+
+tool_events() { # <turn|all> [strip]: one "name<TAB>compact-input-json" line per tool_use;
+  # strip=1 drops heredoc bodies from string commands first
   local f
   while IFS= read -r f; do
-    jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use")
-           | [.name, (.input | tojson)] | @tsv' "$f" 2>/dev/null
+    jq -r --argjson strip "${2:-0}" "$JQ_STRIP_HEREDOCS"'
+      select(.type=="assistant") | .message.content[]? | select(.type=="tool_use")
+      | [.name, (.input | if $strip == 1 and (.command|type) == "string"
+                          then .command |= strip_heredoc_bodies else . end | tojson)] | @tsv' "$f" 2>/dev/null
   done < <(turn_files "$1")
 }
 
@@ -365,14 +388,15 @@ grade_one() {
       return 0 ;;
 
     tool_use)
-      local tool ipat xpat expect count turn events matches m
+      local tool ipat xpat skip expect count turn events matches m
       tool="$(jq -r '.tool' <<<"$g")"
       ipat="$(jq -r '.input_pattern // ""' <<<"$g")"
       xpat="$(jq -r '.exclude_pattern // ""' <<<"$g")"
+      skip="$(jq -r 'if .ignore_heredoc_bodies then 1 else 0 end' <<<"$g")"
       expect="$(jq -r '.expect // "present"' <<<"$g")"
       count="$(jq -r '.count // ""' <<<"$g")"
       turn="$(jq -r '.turn // "all"' <<<"$g")"
-      events="$(tool_events "$turn")"
+      events="$(tool_events "$turn" "$skip")"
       if [[ "$tool" == "*" ]]; then matches="$events"
       else matches="$(awk -F'\t' -v t="$tool" '$1 == t' <<<"$events")"; fi
       if [[ -n "$ipat" ]]; then matches="$(grep -E -- "$ipat" <<<"$matches" || true)"; fi
