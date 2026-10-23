@@ -20,8 +20,9 @@ topic from a templated message builder that sets the time-to-live once, one bloc
 publish_await_acknowledgement() per message with a POSITIVE acknowledgement timeout,
 reconnection and service interruption listeners registered BEFORE connect(), and a
 graceful SIGINT/SIGTERM shutdown. There is no publish receipt listener: the call
-returns once the broker ACKs the message and raises on a NACK or a timeout, and any
-publish failure stops the publisher with exit code 1. The non-blocking variant is
+returns once the broker ACKs the message and raises on a NACK or a timeout. A timeout,
+a NACK, or a buffer overflow discards that message and the publisher continues; any
+other publish failure stops the publisher with exit code 1. The non-blocking variant is
 python-guaranteed-publisher-sample.py. Structured as module-level functions,
 setup_solace(...), connect_solace(...), run_publish_loop(...), and teardown_solace(...),
 that share one PublisherState; setup_solace() creates the service and the publisher
@@ -87,7 +88,7 @@ PAYLOAD_SIZE = 512
 # None: the API then waits for the ACK without a limit, so a lost ACK hangs the publisher
 # and a shutdown signal never takes effect. An ACK normally comes back in milliseconds;
 # 5 s also covers a slow broker or a short reconnect. A longer reconnect than that times
-# out the message in flight, and the publisher stops.
+# out the message in flight, and the publisher discards it.
 PUBLISH_ACK_TIMEOUT_MS = 5000
 # how often the publish loop reports its message rate, in seconds
 STATS_INTERVAL_S = 1.0
@@ -252,38 +253,33 @@ def run_publish_loop(state: PublisherState) -> None:
             # takes effect once the call returns, within PUBLISH_ACK_TIMEOUT_MS.
             state.publisher.publish_await_acknowledgement(message, topic, PUBLISH_ACK_TIMEOUT_MS)
             state.msg_sent_counter += 1
-            msg_count += 1
+        # A timeout, a NACK, or an overflow is handled with the "Discard the Message" strategy
+        # from the Python developer guide ("Strategies for Handling Publish Receipt Errors"):
+        # log it and go on to the next message, so these are INFO, not errors. Do not use this
+        # strategy if the application cannot tolerate message loss; the guide's other
+        # strategies are to wait and retry, and to retry a predefined number of times.
         except PubSubTimeoutError:
             # no ACK or NACK inside the timeout. The broker can still have the message (the
-            # ACK can be late, for example after a long reconnect), so sending it again can
-            # deliver a duplicate
-            logger.error("No ACK for Message ID %s within %d ms, quitting", msg_id, PUBLISH_ACK_TIMEOUT_MS)
-            state.exit_code = 1
-            break
+            # ACK can be late, for example after a long reconnect), so a discarded message can
+            # still be delivered
+            logger.info("No ACK for Message ID %s within %d ms; discarding it", msg_id, PUBLISH_ACK_TIMEOUT_MS)
         except (MessageRejectedByBrokerError, MessageNotAcknowledgedByBrokerError,
                 MessageDestinationDoesNotExistError) as error:
             # NACK: the broker did not persist the message, and the exception says why (for
             # example MessageDestinationDoesNotExistError when no queue subscribes to the
-            # topic and the client-profile rejects on no subscription match). Some error
-            # handling possibilities instead of quitting:
-            #  - send it again, or send it somewhere else (error handling queue?)
-            #  - log and continue
-            #  - pause and retry (backoff)
-            logger.error("NACK for Message ID %s, quitting: %s", msg_id, error)
-            state.exit_code = 1
-            break
+            # topic and the client-profile rejects on no subscription match)
+            logger.info("NACK for Message ID %s; discarding it: %s", msg_id, error)
         except PublisherOverflowError as error:
             # the API reference lists it for this call; with one message in flight and the
             # default back-pressure setting, the publish buffer does not overflow
-            logger.error("Publish buffer overflow for Message ID %s, quitting: %s", msg_id, error)
-            state.exit_code = 1
-            break
+            logger.info("Publish buffer overflow for Message ID %s; discarding it: %s", msg_id, error)
         except PubSubPlusClientError as error:
             # the message cannot be sent (for example the service is down or the publisher
             # terminated) and retrying would not help
             logger.error("publish_await_acknowledgement() failed, quitting: %s", error)
             state.exit_code = 1
             break  # let's quit; or, could initiate a new connection attempt
+        msg_count += 1
         # simple way of calculating message rates
         now = time.monotonic()
         if now >= next_report:
