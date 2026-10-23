@@ -86,9 +86,9 @@ PAYLOAD_SIZE = 512
 # POSITIVE acknowledgement timeout in MILLISECONDS: publish_await_acknowledgement() blocks
 # up to this long for the broker's ACK or NACK, then raises PubSubTimeoutError. Never pass
 # None: the API then waits for the ACK without a limit, so a lost ACK hangs the publisher
-# and a shutdown signal never takes effect. An ACK normally comes back in milliseconds;
-# 5 s also covers a slow broker or a short reconnect. A longer reconnect than that times
-# out the message in flight, and the publisher discards it.
+# and a shutdown signal never takes effect. The C API resends an unACKed message every
+# 2000 ms (its publish ACK timer), so 5000 ms allows three attempts. Keep the value a little
+# above a multiple of 2000 ms.
 PUBLISH_ACK_TIMEOUT_MS = 5000
 # how often the publish loop reports its message rate, in seconds
 STATS_INTERVAL_S = 1.0
