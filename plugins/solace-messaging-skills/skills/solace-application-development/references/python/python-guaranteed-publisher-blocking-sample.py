@@ -101,14 +101,15 @@ RECONNECT_RETRY_INTERVAL_MS = 3000
 #   HA failover: with_connection_retry_strategy(RetryStrategy.parametrized_retry(1, 3000)),
 #     with_reconnection_retry_strategy(RetryStrategy.parametrized_retry(20, 3000)),
 #     properties[transport_layer_properties.CONNECTION_RETRIES_PER_HOST] = 5
-# terminate(grace_period): how long to wait for a send or its broker receipt that is still
-# outstanding before the publisher stops; terminate() raises
-# IncompleteMessageDeliveryError when one is still outstanding after that. With a blocking
-# publish, at most one message is outstanding at teardown: the one whose wait timed out
-# or failed. A bounded grace period keeps shutdown time predictable, for example within
-# the stop timeout of a process supervisor, so the disconnect still runs. The API default
-# is 600000 ms (10 minutes). Adjust the value to suit the application: longer gives that
-# message more time to complete, shorter exits sooner.
+# terminate(grace_period): how long to wait for a message that the API has not yet handed
+# to the transport (still in its publish buffer) before the publisher stops; terminate()
+# raises IncompleteMessageDeliveryError when that message is still unsent after that. It
+# does not wait for, or report, a sent message whose ACK is late: a blocking publish tracks
+# its own ACK, and after an ACK timeout the message is normally already with the transport.
+# A bounded grace period keeps shutdown time predictable, for example within the stop
+# timeout of a process supervisor, so the disconnect still runs. The API default is
+# 600000 ms (10 minutes). Adjust the value to suit the application: longer gives an unsent
+# message more time to go out, shorter exits sooner.
 TERMINATE_GRACE_PERIOD_MS = 10_000
 # best practice for Guaranteed publishing (C API Best Practices): set a time-to-live so an
 # unconsumed message does not sit on a queue forever. In MILLISECONDS; 0, the API default,
@@ -301,14 +302,15 @@ def teardown_solace(state: PublisherState) -> None:
     # cleanup are never skipped.
     state.shutdown.set()
     if state.publisher.is_running():
-        # after a normal quit every message is already ACKed, so terminate() returns at once.
-        # After a timeout or a failure, it gives the one outstanding message up to the grace
-        # period. It raises IncompleteMessageDeliveryError when that message is still
-        # outstanding after the grace period; catch it so the disconnect below still runs
+        # after a normal quit, an ACK timeout, or a NACK, the publish buffer is empty, so
+        # terminate() returns at once. It waits up to the grace period only for a message the
+        # API has not yet handed to the transport, and raises IncompleteMessageDeliveryError
+        # when that message is still unsent after the grace period; catch it so the disconnect
+        # below still runs
         try:
             state.publisher.terminate(TERMINATE_GRACE_PERIOD_MS)
         except IncompleteMessageDeliveryError as error:
-            logger.error("Publisher stopped with a send or receipt still outstanding after %d ms: %s",
+            logger.error("Publisher stopped with a message still unsent after %d ms: %s",
                          TERMINATE_GRACE_PERIOD_MS, error)
             state.exit_code = 1
         except PubSubPlusClientError as error:

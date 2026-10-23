@@ -295,8 +295,8 @@ def process_message(state: SubscriberState, message: InboundMessage) -> None:
         try:
             state.receiver.ack(message)  # ACKs are asynchronous
         except PubSubPlusClientError as error:
-            # the ACK did not reach the API (for example the receiver is terminating): the
-            # message stays on the queue and is redelivered
+            # the ACK did not reach the API (for example the broker terminated the receiver,
+            # or the service went down): the message stays on the queue and is redelivered
             logger.warning("ACK failed for message id %s; the broker redelivers it: %s",
                            message.get_application_message_id(), error)
 
