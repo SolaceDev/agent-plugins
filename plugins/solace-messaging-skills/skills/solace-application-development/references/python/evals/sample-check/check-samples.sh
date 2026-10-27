@@ -89,25 +89,31 @@ bash -n "${REFERENCES_DIR}/scripts/verify.sh"
 echo "PASS: scripts/verify.sh parses"
 
 # (7) The bundled verify script must resolve the fixed script names of both threading
-#     shapes (implement-mode.md Step 4) without a broker: with only the named scripts
-#     present under src/ and no .venv, each stage must get past script resolution to its
-#     virtual-environment check, and with no script present it must name the default.
+#     shapes (implement-mode.md Step 4) without a broker. Single-project mode stops at the
+#     long-running role's missing .venv before it looks at the foreground role, so the
+#     fixture uses separate-projects mode with a stub interpreter in the long-running
+#     role's directory: with both scripts present under src/ the stage must get past both
+#     names to the foreground role's virtual-environment check, and with either script
+#     missing it must name that script in that directory.
 echo "Checking that scripts/verify.sh resolves the fixed script names..."
-verify_stderr() {  # <dir> <stage>: verify.sh's stderr with connection arguments and no .venv
-  ( cd "$1" && bash "${REFERENCES_DIR}/scripts/verify.sh" "$2" tcp://localhost:55555 vpn user 2>&1 >/dev/null ) || true
+verify_stderr() {  # <stage> <sub-dir> <pub-dir>: verify.sh's stderr in separate-projects mode, no broker
+  ( bash "${REFERENCES_DIR}/scripts/verify.sh" "$1" --subscriber-dir "$2" --publisher-dir "$3" 2>&1 >/dev/null ) || true
 }
-expect_resolved() {  # <stage> <script>...: the stage resolves these scripts
-  local stage="$1"; shift
-  local dir; dir="$(mktemp -d "${WORK_DIR}/resolve.XXXXXX")"
-  mkdir -p "${dir}/src"
-  local script; for script in "$@"; do : > "${dir}/src/${script}"; done
-  grep -q "no virtual environment" <<<"$(verify_stderr "$dir" "$stage")" \
-    || { echo "ERROR: verify.sh ${stage} did not resolve: $*" >&2; exit 1; }
+make_roles() {  # sets SUB and PUB to fresh role directories; SUB carries a stub interpreter
+  SUB="$(mktemp -d "${WORK_DIR}/sub.XXXXXX")"; PUB="$(mktemp -d "${WORK_DIR}/pub.XXXXXX")"
+  mkdir -p "${SUB}/src" "${SUB}/.venv/bin" "${PUB}/src"
+  : > "${SUB}/.venv/bin/python"; chmod +x "${SUB}/.venv/bin/python"
 }
-expect_missing() {  # <stage> <script>: with no script present, the stage names this default
-  local dir; dir="$(mktemp -d "${WORK_DIR}/resolve.XXXXXX")"
-  grep -q "no src/$2 found" <<<"$(verify_stderr "$dir" "$1")" \
-    || { echo "ERROR: verify.sh $1 did not report $2 as missing" >&2; exit 1; }
+expect_resolved() {  # <stage> <sub-script> <pub-script>: the stage resolves both names
+  make_roles; : > "${SUB}/src/$2"; : > "${PUB}/src/$3"
+  grep -qF "no virtual environment in: $(cd "${PUB}" && pwd)" <<<"$(verify_stderr "$1" "${SUB}" "${PUB}")" \
+    || { echo "ERROR: verify.sh $1 did not resolve: $2 $3" >&2; exit 1; }
+}
+expect_missing() {  # <stage> <sub-script|-> <pub-script|-> <sub|pub> <default>: the stage names the absent role's default
+  make_roles; [ "$2" = - ] || : > "${SUB}/src/$2"; [ "$3" = - ] || : > "${PUB}/src/$3"
+  local dir; if [ "$4" = sub ]; then dir="${SUB}"; else dir="${PUB}"; fi
+  grep -qF "no src/$5 found in: $(cd "${dir}" && pwd)" <<<"$(verify_stderr "$1" "${SUB}" "${PUB}")" \
+    || { echo "ERROR: verify.sh $1 did not report src/$5 as missing in the $4 directory" >&2; exit 1; }
 }
 expect_resolved consumer  guaranteed_subscriber.py guaranteed_publisher.py
 expect_resolved roundtrip guaranteed_subscriber_blocking.py guaranteed_publisher_blocking.py
@@ -115,8 +121,10 @@ expect_resolved direct    direct_subscriber.py direct_publisher.py
 expect_resolved direct    direct_subscriber_blocking.py direct_publisher.py
 expect_resolved direct-request-reply direct_replier.py direct_requestor_blocking.py
 expect_resolved direct-request-reply direct_replier.py direct_requestor.py
-expect_missing  consumer  guaranteed_subscriber.py
-expect_missing  direct    direct_subscriber.py
+expect_missing  consumer  - guaranteed_publisher.py sub guaranteed_subscriber.py
+expect_missing  roundtrip guaranteed_subscriber.py - pub guaranteed_publisher.py
+expect_missing  direct    - direct_publisher.py sub direct_subscriber.py
+expect_missing  direct-request-reply direct_replier.py - pub direct_requestor_blocking.py
 echo "PASS: scripts/verify.sh resolves the fixed script names of both threading shapes"
 
 echo "PASS: the baked Python samples against solace-pubsubplus ${VERSION}"
