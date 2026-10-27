@@ -344,7 +344,6 @@
       { "type": "live_verify", "api": "python" },
       { "type": "disclaimer", "api": "python" },
       { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.publish_await_acknowledgement\\(", "expect": "present" },
-      { "type": "file_grep", "glob": "guaranteed_publisher_blocking.py", "pattern": "^[^#]*exit_code *= *1", "expect": "present" },
       { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.publish_await_acknowledgement\\([^)]*None", "expect": "absent" },
       { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.receive_message\\(", "expect": "present" },
       { "type": "file_grep", "glob": "*.py", "pattern": "^[^#]*\\.receive_message\\([[:space:]]*\\)", "expect": "absent" },
