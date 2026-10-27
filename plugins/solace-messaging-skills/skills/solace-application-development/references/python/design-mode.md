@@ -84,7 +84,7 @@ Inside the guaranteed publish/subscribe single-service leaf, the exclusive versu
 
 ## Step 4: Emit the design summary
 
-Fill in this ONE unified design summary every run, in chat, with the confirmed values. The same nine fields appear every run regardless of which leaf the tree reached, so Implement mode reads one stable structure. Use explicit `n/a` for any field the chosen pattern does not apply. The title names the API, so a saved `solace-design.md` routes back to the Python entry file (the saved-design exception in SKILL.md API Selection).
+Fill in this ONE unified design summary every run, in chat, with the confirmed values. The same fields appear every run regardless of which leaf the tree reached, so Implement mode reads one stable structure. Use explicit `n/a` for any field the chosen pattern does not apply. The title names the API, so a saved `solace-design.md` routes back to the Python entry file (the saved-design exception in SKILL.md API Selection).
 
 ```
 Solace Python Design Summary
@@ -99,7 +99,7 @@ Solace Python Design Summary
 - Grounding docs:      <ONLY the canonical pages actually WebFetched in this session; `none fetched` when none was>
 ```
 
-The nine fields are fixed: Pattern, Delivery, Access type, Topic, Consumption endpoint, Threading, Auth, Broker, Grounding docs. Formatting is at your discretion, but always present all nine, every run, with explicit `n/a` where a field does not apply. The JCSMP summary keeps its own eight fields; the two summaries route by their title and are no longer the same shape. The `Pattern` value stays one of the five leaf strings verbatim even for a variant; the deviation lives in the topology fields, never in a new leaf string.
+The fields are fixed: Pattern, Delivery, Access type, Topic, Consumption endpoint, Threading, Auth, Broker, Grounding docs. Formatting is at your discretion, but always present every field in that list, every run, with explicit `n/a` where a field does not apply. The JCSMP summary keeps its own, shorter field list; the two summaries route by their title and are no longer the same shape. The `Pattern` value stays one of the five leaf strings verbatim even for a variant; the deviation lives in the topology fields, never in a new leaf string.
 
 Field semantics:
 
