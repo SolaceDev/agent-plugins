@@ -40,7 +40,9 @@
 #                       (present|absent), fixed (default false), turn
 #                       (default all).
 #   tool_use            match tool_use events by tool name (or "*") and an
-#                       optional ERE over the compact input JSON. Fields:
+#                       optional ERE over the compact input JSON, minus a
+#                       Bash call's description field (narration, not the
+#                       command). Fields:
 #                       tool, input_pattern, exclude_pattern (drop matches of
 #                       this ERE before counting), ignore_heredoc_bodies
 #                       (strip heredoc bodies from Bash commands before
@@ -263,7 +265,8 @@ tool_events() { # <turn|all> [strip]: one "name<TAB>compact-input-json" line per
   while IFS= read -r f; do
     jq -r --argjson strip "${2:-0}" "$JQ_STRIP_HEREDOCS"'
       select(.type=="assistant") | .message.content[]? | select(.type=="tool_use")
-      | [.name, (.input | if $strip == 1 and (.command|type) == "string"
+      | [.name, (.input | del(.description)
+                      | if $strip == 1 and (.command|type) == "string"
                           then .command |= strip_heredoc_bodies else . end | tojson)] | @tsv' "$f" 2>/dev/null
   done < <(turn_files "$1")
 }

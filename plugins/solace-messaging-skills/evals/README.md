@@ -37,7 +37,7 @@ Each `turnN.jsonl` in the work directory is the raw `--output-format stream-json
 | Grader `turn` | Selects which `turn<N>.jsonl` file the grader reads. It is not a field inside the file. |
 | `skill` (the implicit skill-fired gate) | An `assistant` event whose `message.content[]` holds a `tool_use` block with `name` `Skill`. Its `input.skill` is `plugin:skill-name`; the runner strips the prefix. |
 | `assistant_grep` | `assistant` events, `message.content[]` blocks with `type` `text`. Thinking blocks and tool payloads are excluded. |
-| `tool_use` | `assistant` events, blocks with `type` `tool_use`. The runner matches `name` and greps the compact JSON of `input`. |
+| `tool_use` | `assistant` events, blocks with `type` `tool_use`. The runner matches `name` and greps the compact JSON of `input`, minus a Bash call's `description` field (narration, not the command). |
 | `llm_judge` with `webfetch_urls` or `webfetch_results` | WebFetch `tool_use` blocks supply the URLs. `user` events whose `tool_result.tool_use_id` matches a WebFetch block supply the fetched content. |
 | Session continuity (`--resume`) | `session_id` on the `result` event, with the `init` event as the fallback. |
 | INFRA verdict for a turn | A missing `result` event, or `result.is_error` true with a `subtype` other than `error_max_turns`. |
