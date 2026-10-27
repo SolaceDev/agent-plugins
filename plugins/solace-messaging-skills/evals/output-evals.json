@@ -197,6 +197,8 @@
     ],
     "max_agent_turns": 80,
     "graders": [
+       { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
+       { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 3 },
@@ -270,6 +272,8 @@
     ],
     "max_agent_turns": 80,
     "graders": [
+       { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
+       { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 4 },
@@ -325,6 +329,8 @@
     ],
     "max_agent_turns": 80,
     "graders": [
+       { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
+       { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Minimal", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
       { "type": "file_exists", "glob": "guaranteed_publisher_blocking.py", "expect": "present" },
@@ -377,6 +383,8 @@
     ],
     "max_agent_turns": 80,
     "graders": [
+       { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
+       { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Minimal", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Direct Pub/Sub", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },

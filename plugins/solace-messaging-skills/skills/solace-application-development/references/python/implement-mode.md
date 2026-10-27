@@ -12,11 +12,13 @@ Work through the steps in order. Read this file's grounding links only as each s
 
 Every Implement run writes ALL of these as generation output, on every app shape. None of them is gated on consent, and none of them waits for the end of the session:
 
-1. The generated scripts for the chosen leaf, plus the shared `solace_connection_config.py` helper. Every source file starts with the AI-assisted disclaimer header (Step 4).
+1. The generated scripts for the chosen leaf, plus the shared `solace_connection_config.py` helper, all under `src/` at the project root. Every source file starts with the AI-assisted disclaimer header (Step 4).
 2. `requirements.txt` with the `solace-pubsubplus` version resolved per Step 3.
 3. `config.example.json` (placeholders) and a `.gitignore` that ignores `config.json` and the virtual environment (Step 4).
 4. A tailored `solace-verification-checklist.md` at each project root (tailoring rules in Step 6; the WRITE happens here at generation time, like the scripts).
 5. A copy of the bundled Python `scripts/verify.sh` at each project root, plus a generated `verify-hooks.sh` beside it (Step 5), so the verification commands resolve from inside the project.
+
+**Project layout.** Every `.py` file the project generates goes under `src/`, and nothing else does. The project root holds `requirements.txt`, `.venv/`, `config.example.json`, `config.json`, `.gitignore`, `verify.sh`, `verify-hooks.sh`, `solace-design.md`, and `solace-verification-checklist.md`, so code and Markdown never share a directory. `src/` is a plain directory, not a package: no `__init__.py` and no `pyproject.toml`. Every script runs from the project root as `.venv/bin/python src/<script>.py`: the script then reads `config.json` from the working directory, and Python puts `src/` on the module path for it, so the sibling import of `solace_connection_config` resolves. Any further source file an app shape adds (a web dashboard, an entry point) goes under `src/` too. On separate projects (Solace Suggested, or the Custom decoupled-projects knob) each role project has its own `src/`.
 
 Copy the Python `verify.sh` from `references/python/scripts/`, never the JCSMP one: the JCSMP script drives Maven and cannot run Python scripts.
 
@@ -94,9 +96,9 @@ Generation is keyed on the `Pattern` leaf read in Step 2, and the `Threading` fi
 
 **The `Threading` field selects the sample pair.** `Async`, or a summary with no `Threading` field (Step 2), selects the callback shape: the receiver hands each message to a `receive_async()` handler and the persistent publisher takes its receipts on a listener. `Minimal (blocking publish and receive)` selects the blocking shape: the receiver's main loop pulls each message with `receive_message(timeout)`, and the persistent publisher sends each message with `publish_await_acknowledgement()`. The direct publisher is the same script on both shapes, because direct has no receipt to await. Each blocking sample's docstring names the generated file it becomes.
 
-**Every leaf also generates the shared connection helper.** Read `python-solace-connection-config.py` and generate it as `solace_connection_config.py` (a module name needs underscores). Each script builds its connection dict by calling `load_service_properties(args, APP_NAME)` from that module and passes it to `MessagingService.builder().from_properties(...)`, rather than setting the host, VPN, username, or password inline.
+**Every leaf also generates the shared connection helper.** Read `python-solace-connection-config.py` and generate it as `src/solace_connection_config.py` (a module name needs underscores). Each script builds its connection dict by calling `load_service_properties(args, APP_NAME)` from that module and passes it to `MessagingService.builder().from_properties(...)`, rather than setting the host, VPN, username, or password inline.
 
-**Fixed file names.** Generate each script under the name its sample's docstring gives, next to `solace_connection_config.py`: `guaranteed_publisher.py` and `guaranteed_subscriber.py`, or `guaranteed_publisher_blocking.py` and `guaranteed_subscriber_blocking.py` on the minimal-threading shape (the fan-out leaf adds one subscriber script per further consuming service, named in `implement-guaranteed-pubsub.md`); `direct_publisher.py` and `direct_subscriber.py`, or `direct_publisher.py` and `direct_subscriber_blocking.py` on the minimal-threading shape; and `direct_replier.py` with `direct_requestor_blocking.py` (or `direct_requestor.py` on the non-blocking variant). `verify.sh` (Step 5) finds the scripts by these names, and it runs the blocking name when the project has it instead of the default name; the names of functions, constants, and the `APP_NAME` value inside each script stay your discretion.
+**Fixed file names.** Generate each script under `src/`, with the name its sample's docstring gives, next to `solace_connection_config.py`: `guaranteed_publisher.py` and `guaranteed_subscriber.py`, or `guaranteed_publisher_blocking.py` and `guaranteed_subscriber_blocking.py` on the minimal-threading shape (the fan-out leaf adds one subscriber script per further consuming service, named in `implement-guaranteed-pubsub.md`); `direct_publisher.py` and `direct_subscriber.py`, or `direct_publisher.py` and `direct_subscriber_blocking.py` on the minimal-threading shape; and `direct_replier.py` with `direct_requestor_blocking.py` (or `direct_requestor.py` on the non-blocking variant). `verify.sh` (Step 5) finds the scripts by these names under `src/`, and it runs the blocking name when the project has it instead of the default name; the names of functions, constants, and the `APP_NAME` value inside each script stay your discretion.
 
 **Disclaimer header on EVERY generated source file.** Stamp the top of each generated `.py` file with these two comment lines, before the module docstring and before any import:
 
@@ -155,7 +157,7 @@ Generate two small project files next to the scripts (on Solace Suggested, on Cu
 
 - A `.gitignore` at the project root that ignores `config.json`, `.venv/`, and `__pycache__/`, so the real credential-bearing file and the local environment are never committed.
 
-Tell the developer they opt in to the config file by copying `config.example.json` to `config.json` and filling in their real broker values. Both scripts then read it from the working directory, so they run from the project root.
+Tell the developer they opt in to the config file by copying `config.example.json` to `config.json` and filling in their real broker values. Both scripts then read it from the working directory, so they run from the project root as `.venv/bin/python src/<script>.py`, never from inside `src/`.
 
 ## Step 5: Check the project, then verify with verify.sh
 
@@ -167,13 +169,13 @@ Verification is a `verify.sh` run, on every door and every app shape. Step 4 cop
 
 Run these checks on every run, before any `verify.sh` stage. On the compile-only fallback below they are the whole check.
 
-1. **Compile check.** Run `.venv/bin/python -m py_compile` on every generated `.py` file. A failure is a code failure: fix it and re-run, up to 3 attempts, then report the evidence and hand the decision to the developer.
-2. **Import smoke.** From the project root, run `.venv/bin/python -c "import solace_connection_config, guaranteed_publisher, guaranteed_subscriber"` with the module names of the chosen leaf and threading shape (for example `guaranteed_publisher_blocking, guaranteed_subscriber_blocking`, `direct_publisher, direct_subscriber`, `direct_publisher, direct_subscriber_blocking`, or `direct_replier, direct_requestor_blocking`), adding every further generated module (for example each fan-out subscriber). On separate projects, run the checks in each project root against that project's modules. Each script keeps its `if __name__ == "__main__":` guard, so the import resolves every `solace.messaging` name the scripts use without connecting to a broker. A failure (for example an `ImportError` on a misspelled module path) is a code failure under the same fix loop.
+1. **Compile check.** Run `.venv/bin/python -m py_compile src/*.py` on every generated `.py` file. A failure is a code failure: fix it and re-run, up to 3 attempts, then report the evidence and hand the decision to the developer.
+2. **Import smoke.** From the project root, run `PYTHONPATH=src .venv/bin/python -c "import solace_connection_config, guaranteed_publisher, guaranteed_subscriber"` with the module names of the chosen leaf and threading shape (for example `guaranteed_publisher_blocking, guaranteed_subscriber_blocking`, `direct_publisher, direct_subscriber`, `direct_publisher, direct_subscriber_blocking`, or `direct_replier, direct_requestor_blocking`), adding every further generated module (for example each fan-out subscriber). On separate projects, run the checks in each project root against that project's modules. Each script keeps its `if __name__ == "__main__":` guard, so the import resolves every `solace.messaging` name the scripts use without connecting to a broker. A failure (for example an `ImportError` on a misspelled module path) is a code failure under the same fix loop.
 3. **Conformance checks.** From the project root, run these three checks and record each result in the checklist. A missing header or a missing checklist is a code failure under the same fix loop; a version mismatch is reported to the developer, not fixed silently. The `verify.sh` preflight repeats them as warnings on every run.
 
    ```bash
    # every generated .py file starts with the disclaimer header
-   for f in *.py; do head -n 1 "$f" | grep -qxF '# AI-assisted code. Review before production use.' || echo "MISSING HEADER: $f"; done
+   for f in src/*.py; do head -n 1 "$f" | grep -qxF '# AI-assisted code. Review before production use.' || echo "MISSING HEADER: $f"; done
    # the tailored checklist exists
    test -f solace-verification-checklist.md || echo "MISSING CHECKLIST"
    # the pin matches the release PyPI reports now (skip and record it when PyPI is unreachable)
@@ -204,7 +206,7 @@ A web app, an embedded service, or any single-process shape that the fixed stage
 
 ```bash
 # verify-hooks.sh: generated with the project; verify.sh's app stage sources it.
-START_CMD='.venv/bin/python app.py'                                        # starts the app (long-running)
+START_CMD='.venv/bin/python src/app.py'                                    # starts the app (long-running)
 TRIGGER_CMD='curl -s --max-time 10 -X POST localhost:8081/api/orders -d "{\"demo\":1}"'  # causes exactly one publish
 READY_MARKER='VERIFY: QUEUE_BOUND'          # marker proving the consuming side is live
 PASS_MARKER='VERIFY: MESSAGE_RECEIVED'      # marker proving the round trip

@@ -52,6 +52,7 @@ The `verify.sh` stage for the leaf checks these items in each role's own output 
 These are mechanical conformance checks on the generated output itself. The copied `verify.sh` reports the first three in its preflight, so a miss is visible on every run.
 
 - [ ] The disclaimer header is the first two lines of every generated `.py` file.
+- [ ] Every generated `.py` file sits under `src/`; the project root holds only `requirements.txt`, the config files, `.gitignore`, the verify scripts, and the Markdown artifacts.
 - [ ] `requirements.txt` pins the `solace-pubsubplus` version that PyPI reported as `info.version` at generation time, or the developer's version when PyPI was unreachable.
 - [ ] This tailored checklist exists at every generated project root.
 - [ ] `py_compile` and the import smoke passed (`implement-mode.md` Step 5).

@@ -90,7 +90,7 @@ echo "PASS: scripts/verify.sh parses"
 
 # (7) The bundled verify script must resolve the fixed script names of both threading
 #     shapes (implement-mode.md Step 4) without a broker: with only the named scripts
-#     present and no .venv, each stage must get past script resolution to its
+#     present under src/ and no .venv, each stage must get past script resolution to its
 #     virtual-environment check, and with no script present it must name the default.
 echo "Checking that scripts/verify.sh resolves the fixed script names..."
 verify_stderr() {  # <dir> <stage>: verify.sh's stderr with connection arguments and no .venv
@@ -99,13 +99,14 @@ verify_stderr() {  # <dir> <stage>: verify.sh's stderr with connection arguments
 expect_resolved() {  # <stage> <script>...: the stage resolves these scripts
   local stage="$1"; shift
   local dir; dir="$(mktemp -d "${WORK_DIR}/resolve.XXXXXX")"
-  local script; for script in "$@"; do : > "${dir}/${script}"; done
+  mkdir -p "${dir}/src"
+  local script; for script in "$@"; do : > "${dir}/src/${script}"; done
   grep -q "no virtual environment" <<<"$(verify_stderr "$dir" "$stage")" \
     || { echo "ERROR: verify.sh ${stage} did not resolve: $*" >&2; exit 1; }
 }
 expect_missing() {  # <stage> <script>: with no script present, the stage names this default
   local dir; dir="$(mktemp -d "${WORK_DIR}/resolve.XXXXXX")"
-  grep -q "no $2 found" <<<"$(verify_stderr "$dir" "$1")" \
+  grep -q "no src/$2 found" <<<"$(verify_stderr "$dir" "$1")" \
     || { echo "ERROR: verify.sh $1 did not report $2 as missing" >&2; exit 1; }
 }
 expect_resolved consumer  guaranteed_subscriber.py guaranteed_publisher.py
