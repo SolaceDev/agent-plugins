@@ -146,12 +146,14 @@
     "max_agent_turns": 25,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Delivery\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Access type\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Topic\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Consumption endpoint\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Threading\\**:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Auth\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Broker\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Grounding docs\\**:", "expect": "present" },
@@ -179,7 +181,8 @@
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
       { "type": "tool_use", "tool": "Edit", "expect": "absent" },
       { "type": "file_exists", "glob": "*", "expect": "absent" },
-      { "type": "assistant_grep", "pattern": "[Dd]esign|Pattern:", "expect": "present" }
+      { "type": "assistant_grep", "pattern": "[Dd]esign|Pattern:", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" }
     ]
   },
   {
@@ -188,14 +191,17 @@
     "must_pass": true,
     "user_turns": [
       "Build a Python app with the Solace Python API (solace-pubsubplus) for food-delivery order processing. An order service publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing kitchen worker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Python project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "A multi-threaded app is fine.",
       "Yes, I am happy with that design. Save it to solace-design.md, then go ahead.",
       "Quickstart, against that Solace Cloud broker. The broker URL is plaintext (tcp://). I will not put credentials in the chat, so compile only and hand me the exact verify commands to run myself."
     ],
     "max_agent_turns": 80,
     "graders": [
-      { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 2 },
-      { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 2 },
-      { "type": "assistant_grep", "pattern": "Custom", "fixed": true, "expect": "present", "turn": 2 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 3 },
+      { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 3 },
+      { "type": "assistant_grep", "pattern": "Custom", "fixed": true, "expect": "present", "turn": 3 },
       { "type": "file_exists", "glob": "solace-design.md", "expect": "present" },
       { "type": "file_exists", "glob": "requirements.txt", "expect": "present", "count": 1 },
       { "type": "file_exists", "glob": "guaranteed_publisher.py", "expect": "present" },
@@ -231,7 +237,7 @@
       { "type": "tool_use", "tool": "Bash", "input_pattern": "py_compile", "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "verify\\.sh +(consumer|publisher|roundtrip|app|direct)", "ignore_heredoc_bodies": true, "expect": "absent" },
       { "type": "assistant_grep", "pattern": "./verify.sh", "fixed": true, "expect": "present" },
-      { "type": "assistant_grep", "pattern": "[Tt]rust[ -]?store", "expect": "present", "turn": 3 }
+      { "type": "assistant_grep", "pattern": "[Tt]rust[ -]?store", "expect": "present", "turn": 4 }
     ]
   },
   {
@@ -257,13 +263,16 @@
     "skill": "solace-application-development",
     "user_turns": [
       "Build a Python app with the Solace Python API (solace-pubsubplus) for food-delivery order processing: an order service publishes customer orders and a kitchen worker processes them. No order may be lost, even if the kitchen worker restarts. Plain Python, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Guaranteed Pub/Sub (single service, exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "I am not sure, go with the default.",
       "Yes, I am happy with that design. No need to save it, go ahead.",
       "Solace Suggested, against that Solace Cloud broker.",
       "No HA failover needed. I will put the broker's CA certificate into a trust store directory myself. I will not share credentials in the chat; compile only and hand me the commands to run myself."
     ],
     "max_agent_turns": 80,
     "graders": [
-      { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 3 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 4 },
       { "type": "assistant_grep", "pattern": "ght_client_certs.md", "fixed": true, "expect": "present" },
       { "type": "disclaimer", "api": "python" },
       { "type": "file_exists", "glob": "requirements.txt", "expect": "present", "count": 2 },
@@ -298,6 +307,8 @@
     "graders": [
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Python-API-Request-Reply\\.md", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Guaranteed Pub/Sub \\(", "expect": "present" },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Request-Reply", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "[Cc]orrelation", "expect": "present" },
       { "type": "tool_use", "tool": "Write", "expect": "absent" },
