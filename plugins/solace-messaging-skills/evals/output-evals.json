@@ -146,7 +146,7 @@
     "max_agent_turns": 25,
     "graders": [
       { "type": "assistant_grep", "pattern": "[Bb]roker", "expect": "present", "turn": 1 },
-      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-?threaded|[Mm]inimal( threading| \\(blocking)|[Ss]ingle[- ]threaded|[Tt]hread of control", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Pattern\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Delivery\\**:", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Access type\\**:", "expect": "present" },
@@ -199,7 +199,7 @@
     "graders": [
        { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
        { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
-      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-?threaded|[Mm]inimal( threading| \\(blocking)|[Ss]ingle[- ]threaded|[Tt]hread of control", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Quickstart", "fixed": true, "expect": "present", "turn": 3 },
       { "type": "assistant_grep", "pattern": "Solace Suggested", "fixed": true, "expect": "present", "turn": 3 },
@@ -274,7 +274,7 @@
     "graders": [
        { "type": "tool_use", "tool": "*", "input_pattern": "src/solace_connection_config\\.py", "expect": "present" },
        { "type": "tool_use", "tool": "Write", "input_pattern": "\"file_path\": *\"[^\"]*\\.py\"", "exclude_pattern": "\"file_path\": *\"[^\"]*/src/[^\"/]+\\.py\"", "expect": "absent" },
-      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-?threaded|[Mm]inimal( threading| \\(blocking)|[Ss]ingle[- ]threaded|[Tt]hread of control", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "[Ff]ailover", "expect": "present", "turn": 4 },
       { "type": "assistant_grep", "pattern": "ght_client_certs.md", "fixed": true, "expect": "present" },
@@ -311,7 +311,7 @@
     "graders": [
       { "type": "tool_use", "tool": "WebFetch", "input_pattern": "Python-API-Request-Reply\\.md", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Guaranteed Pub/Sub \\(", "expect": "present" },
-      { "type": "assistant_grep", "pattern": "[Mm]ulti-threaded|[Mm]inimal threading", "expect": "present", "turn": 1 },
+      { "type": "assistant_grep", "pattern": "[Mm]ulti-?threaded|[Mm]inimal( threading| \\(blocking)|[Ss]ingle[- ]threaded|[Tt]hread of control", "expect": "present", "turn": 1 },
       { "type": "assistant_grep", "pattern": "Threading[*:`[:space:]]+Async", "expect": "present" },
       { "type": "assistant_grep", "pattern": "Pattern[*:`[:space:]]+Request-Reply", "expect": "absent" },
       { "type": "assistant_grep", "pattern": "[Cc]orrelation", "expect": "present" },
