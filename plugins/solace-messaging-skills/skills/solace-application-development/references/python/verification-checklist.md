@@ -56,6 +56,7 @@ These are mechanical conformance checks on the generated output itself. The copi
 - [ ] `requirements.txt` pins the `solace-pubsubplus` version that PyPI reported as `info.version` at generation time, or the developer's version when PyPI was unreachable.
 - [ ] This tailored checklist exists at every generated project root.
 - [ ] `py_compile` and the import smoke passed (`implement-mode.md` Step 5).
+- [ ] Every payload passed to `build()` or a publish call is a `bytearray` or a `str`, never the `bytes` that `.encode()` returns.
 - [ ] Every construct carried from a reference sample keeps that construct's comment (names adapted); dropped demo-harness code took its comments with it; fresh messaging code that applies a documented practice carries a short comment naming it (`implement-mode.md` Step 4).
 - [ ] A `verify.sh` stage ran and its stage name and exit code are recorded here: `<stage> → exit <code>` (or: the compile-only fallback was taken and the exact commands were handed back).
 - [ ] Every page named in the design summary's Grounding docs field was WebFetched in this session (`none fetched` is an honest value; an unfetched citation is not).
