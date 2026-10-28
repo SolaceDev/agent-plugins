@@ -3,7 +3,7 @@
 # (guaranteed pub/sub, direct pub/sub, and direct request-reply).
 #
 # Usage (three modes):
-#   Single project (both scripts in the working directory, one .venv):
+#   Single project (both scripts under ./src, one .venv):
 #     verify.sh <publisher|consumer|roundtrip|direct|direct-request-reply> [<host:port> <vpn> <user> [pass]]
 #       With no connection arguments, each script reads ./config.json (the only way
 #       to reach a tcps:// host, because the trust store path has no argument form).
@@ -47,7 +47,11 @@
 # script names that implement-mode.md Step 4 gives every generated project
 # (guaranteed_subscriber.py, direct_replier.py, ...), so the same script works
 # across generations whatever the function and constant names inside each file.
-# On the fan-out leaf it drives guaranteed_subscriber.py only.
+# Where a role has two fixed names (the pub/sub roles on the minimal-threading
+# shape, guaranteed_publisher_blocking.py, guaranteed_subscriber_blocking.py, and
+# direct_subscriber_blocking.py; the requestor on its non-blocking variant,
+# direct_requestor.py), it runs the default name when present, else the other.
+# On the fan-out leaf it drives the first subscriber script only.
 #
 # This is run-and-observe, NOT a test framework. It does not stand up a broker.
 #
@@ -138,11 +142,26 @@ else
     esac
 fi
 
-# The request-reply leaf generates the blocking requestor by default and
-# direct_requestor.py on the non-blocking variant; use whichever the project has.
-if [ "$STAGE" = "direct-request-reply" ] && [ ! -f "$PUB_DIR/$PUB_SCRIPT" ] && [ -f "$PUB_DIR/direct_requestor.py" ]; then
-    PUB_SCRIPT=direct_requestor.py
-fi
+# Every generated script lives under src/ at its project root (implement-mode.md
+# Step 4). A role with two fixed names runs the default name when the project has it, else
+# the alternate: the pub/sub leaves generate guaranteed_*_blocking.py and
+# direct_subscriber_blocking.py on the minimal-threading shape (the design
+# summary's Threading field), and the request-reply leaf generates
+# direct_requestor.py on its non-blocking variant. The direct publisher has one
+# name on both shapes.
+resolve_script() {  # <dir> <default> <alternate>; prints the one to run
+    if [ ! -f "$1/src/$2" ] && [ -f "$1/src/$3" ]; then echo "$3"; else echo "$2"; fi
+}
+case "$STAGE" in
+    publisher|consumer|roundtrip)
+        SUB_SCRIPT=$(resolve_script "$SUB_DIR" "$SUB_SCRIPT" guaranteed_subscriber_blocking.py)
+        PUB_SCRIPT=$(resolve_script "$PUB_DIR" "$PUB_SCRIPT" guaranteed_publisher_blocking.py) ;;
+    direct)
+        SUB_SCRIPT=$(resolve_script "$SUB_DIR" "$SUB_SCRIPT" direct_subscriber_blocking.py) ;;
+    direct-request-reply)
+        PUB_SCRIPT=$(resolve_script "$PUB_DIR" "$PUB_SCRIPT" direct_requestor.py) ;;
+esac
+[ "$STAGE" = "app" ] || { SUB_SCRIPT="src/$SUB_SCRIPT"; PUB_SCRIPT="src/$PUB_SCRIPT"; }
 
 # Each project runs with its own virtual environment's interpreter, never the
 # system python3 (implement-mode.md Step 3).
@@ -175,7 +194,7 @@ preflight() {
     if [ ! -f "$d/solace-verification-checklist.md" ]; then
         echo "PREFLIGHT WARN: $d/solace-verification-checklist.md is missing (every generation must emit it; implement-mode.md Step 4)" >&2
     fi
-    for f in "$d"/*.py; do
+    for f in "$d"/src/*.py; do
         [ -f "$f" ] || continue
         head -n 1 "$f" | grep -qxF '# AI-assisted code. Review before production use.' || missing="$missing$f"$'\n'
     done
@@ -273,7 +292,7 @@ settled_count() {  # <log> <marker>
 compile_project() {
     local d="$1" py="$2" files=()
     local f
-    for f in "$d"/*.py; do [ -f "$f" ] && files+=("$f"); done
+    for f in "$d"/src/*.py; do [ -f "$f" ] && files+=("$f"); done
     [ "${#files[@]}" -gt 0 ] || return 0
     echo "── Checking $d with py_compile ──"
     if ! "$py" -m py_compile "${files[@]}"; then

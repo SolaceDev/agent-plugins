@@ -40,7 +40,9 @@
 #                       (present|absent), fixed (default false), turn
 #                       (default all).
 #   tool_use            match tool_use events by tool name (or "*") and an
-#                       optional ERE over the compact input JSON. Fields:
+#                       optional ERE over the compact input JSON, minus a
+#                       Bash call's description field (narration, not the
+#                       command). Fields:
 #                       tool, input_pattern, exclude_pattern (drop matches of
 #                       this ERE before counting), ignore_heredoc_bodies
 #                       (strip heredoc bodies from Bash commands before
@@ -61,7 +63,7 @@
 #                       pom.xml. python: for every generated requirements.txt,
 #                       a fresh venv outside the project, `pip install -r`,
 #                       py_compile of every .py in the project, and an import
-#                       smoke of every top-level module. All must succeed.
+#                       smoke of every module under src/. All must succeed.
 #                       Each mvn or pip run is bounded at 600s when GNU
 #                       timeout (or gtimeout) is on PATH; unbounded, with a
 #                       warning, otherwise. Fields: api (jcsmp|python,
@@ -263,7 +265,8 @@ tool_events() { # <turn|all> [strip]: one "name<TAB>compact-input-json" line per
   while IFS= read -r f; do
     jq -r --argjson strip "${2:-0}" "$JQ_STRIP_HEREDOCS"'
       select(.type=="assistant") | .message.content[]? | select(.type=="tool_use")
-      | [.name, (.input | if $strip == 1 and (.command|type) == "string"
+      | [.name, (.input | del(.description)
+                      | if $strip == 1 and (.command|type) == "string"
                           then .command |= strip_heredoc_bodies else . end | tojson)] | @tsv' "$f" 2>/dev/null
   done < <(turn_files "$1")
 }
@@ -502,15 +505,15 @@ grade_one() {
           bounded "$venv/bin/pip" install -q -r "$req" >> "$log" 2>&1; rc=$?
           [[ "$rc" -eq 124 ]] && { GRADER_DETAIL="pip install for $req timed out after 600s, log: $log"; return 2; }
           [[ "$rc" -eq 0 ]] || { GRADER_DETAIL="pip install -r $req failed (exit $rc), log: $log"; return 1; }
-          mods="$(find "$proj" -maxdepth 1 -type f -name '*.py' -exec basename {} .py \; | sort | paste -sd, -)"
-          [[ -z "$mods" ]] && { GRADER_DETAIL="no .py file beside $req"; return 1; }
+          mods="$(find "$proj/src" -maxdepth 1 -type f -name '*.py' -exec basename {} .py \; 2>/dev/null | sort | paste -sd, -)"
+          [[ -z "$mods" ]] && { GRADER_DETAIL="no .py file under $proj/src (every generated script lives under src/)"; return 1; }
           ( cd "$proj" && find . -name '*.py' -not -path './.venv/*' -print0 \
               | xargs -0 "$venv/bin/python" -m py_compile ) >> "$log" 2>&1 \
             || { GRADER_DETAIL="py_compile failed in $proj, log: $log"; return 1; }
           # Each generated script keeps its __main__ guard, so importing it
           # resolves every solace.messaging name without connecting.
-          ( cd "$proj" && "$venv/bin/python" -c "import ${mods//,/, }" ) >> "$log" 2>&1 \
-            || { GRADER_DETAIL="import smoke of $mods failed in $proj, log: $log"; return 1; }
+          ( cd "$proj/src" && "$venv/bin/python" -c "import ${mods//,/, }" ) >> "$log" 2>&1 \
+            || { GRADER_DETAIL="import smoke of $mods failed in $proj/src, log: $log"; return 1; }
         done <<<"$reqs"
         return 0
       fi

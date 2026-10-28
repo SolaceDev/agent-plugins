@@ -2,7 +2,7 @@
 
 The Custom overlay for Implement mode of the Python API. This file is reached from `implement-mode.md` Step 0 when the developer chooses the Custom door. Custom is a la carte: the developer ticks which hardening knobs to include, and generation applies exactly the ticked subset and nothing more. It is a thin overlay. It does NOT re-describe how each knob works. For the four knobs that map to a `solace-suggested-mode.md` step, it points at that step and reuses it, so `solace-suggested-mode.md` stays the single source of truth for each hardening delta.
 
-This overlay defers to `implement-mode.md` for all leaf and sample mechanics, exactly the way `solace-suggested-mode.md` does: the Step 2 design-summary input contract, the Step 4 leaf dispatch (which leaf wiring file and samples each leaf reads, and the near-verbatim adaptation discipline), the AI-assisted disclaimer header on every generated script, explicit imports (never `from solace.messaging... import *`), and the fixed `VERIFY:` marker contract. Custom changes NO `VERIFY:` marker string. Any live run on the Custom path prints the same one-line live-broker heads-up (SKILL.md Invariant 6) immediately before it starts: name the broker host and the run's actual broker-side effects.
+This overlay defers to `implement-mode.md` for all leaf and sample mechanics, exactly the way `solace-suggested-mode.md` does: the Step 2 design-summary input contract, the Step 4 leaf dispatch (which leaf wiring file each leaf reads, which sample pair the `Threading` field selects, and the near-verbatim adaptation discipline), the AI-assisted disclaimer header on every generated script, explicit imports (never `from solace.messaging... import *`), and the fixed `VERIFY:` marker contract. Custom changes NO `VERIFY:` marker string. Any live run on the Custom path prints the same one-line live-broker heads-up (SKILL.md Invariant 6) immediately before it starts: name the broker host and the run's actual broker-side effects.
 
 ## The checklist model: one up-front multi-select
 
@@ -50,7 +50,7 @@ On **Guaranteed Pub/Sub**, ticking the knob edits the subscriber's generation. D
 KEEP the rest of the subscriber unchanged:
 
 - The local `Queue.durable_exclusive_queue(queue_name)` or `Queue.durable_non_exclusive_queue(queue_name)` handle from the `Access type` field (the receiver still needs a queue object to bind to; the access type itself is now the administrator's broker setting, so state in a comment that it must match).
-- `with_message_client_acknowledgement()`, `with_activation_passivation_support(...)`, `receive_async(...)`, `start()`, and `ack()` after processing.
+- `with_message_client_acknowledgement()`, `with_activation_passivation_support(...)`, `receive_async(...)` (or the `receive_message(...)` loop on the minimal-threading shape), `start()`, and `ack()` after processing.
 - The sample's `PubSubPlusClientError` branch around `start()`: it now reports a queue the administrator has not provisioned.
 
 All of the Guaranteed Pub/Sub leaf's `VERIFY:` markers still emit, unchanged: `VERIFY: CONNECTED` after connect, `VERIFY: QUEUE_BOUND` after `start()`, and `VERIFY: MESSAGE_RECEIVED` after `ack()`. The publisher is untouched, so its `VERIFY: PUBLISH_ACKED` is unaffected. On the fan-out leaf, the drop applies to every subscriber script.
