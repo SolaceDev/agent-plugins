@@ -54,9 +54,9 @@
         { "$ref": "#/$defs/tool_use" },
         { "$ref": "#/$defs/file_exists" },
         { "$ref": "#/$defs/file_grep" },
-        { "$ref": "#/$defs/java_disclaimer" },
+        { "$ref": "#/$defs/disclaimer" },
         { "$ref": "#/$defs/compile" },
-        { "$ref": "#/$defs/maven_release_match" },
+        { "$ref": "#/$defs/release_match" },
         { "$ref": "#/$defs/llm_judge" },
         { "$ref": "#/$defs/live_verify" }
       ]
@@ -66,6 +66,12 @@
       "enum": ["present", "absent"],
       "default": "present",
       "description": "present: at least one match must exist. absent: no match may exist."
+    },
+    "api": {
+      "type": "string",
+      "enum": ["jcsmp", "python"],
+      "default": "jcsmp",
+      "description": "The Solace API of the generated project that an API-specific grader checks."
     },
     "turn_scope": {
       "type": "integer",
@@ -100,6 +106,7 @@
         "tool": { "type": "string", "minLength": 1, "description": "Tool name to match (Write, Edit, Bash, WebFetch, Skill, ...). \"*\" matches every tool." },
         "input_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression that the compact input JSON must match for the event to count." },
         "exclude_pattern": { "type": "string", "minLength": 1, "description": "Extended regular expression; matching events are dropped before counting. Use it to allow a specific benign match inside an otherwise absent check." },
+        "ignore_heredoc_bodies": { "type": "boolean", "description": "Strip heredoc bodies from a string command input (through each terminator line) before matching, so text written to a file through a heredoc does not count as a command the shell runs." },
         "expect": { "$ref": "#/$defs/expect_presence" },
         "count": { "type": "integer", "minimum": 0, "description": "With expect present: the exact number of matching events required. Omit to require at least one." },
         "turn": { "$ref": "#/$defs/turn_scope" }
@@ -107,13 +114,14 @@
     },
     "file_exists": {
       "type": "object",
-      "description": "Find generated files by basename glob under the case work directory. Maven build output under target/ is excluded.",
+      "description": "Find generated files by basename glob under the case work directory. Maven build output under target/, Python virtual environments under .venv/, and bytecode under __pycache__/ are excluded.",
       "required": ["type", "glob"],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "file_exists" },
         "glob": { "type": "string", "minLength": 1, "description": "Basename glob, for example pom.xml, *.java, or * for any file." },
         "expect": { "$ref": "#/$defs/expect_presence" },
+        "count": { "type": "integer", "minimum": 1, "description": "With expect present: the exact number of matching files required. Omit to require at least one. Used to prove a separate-projects layout, for example one requirements.txt per project." },
         "identical_to": { "type": "string", "minLength": 1, "description": "Repository-relative path. With expect present, every matched file must be byte-identical to this file. Used to prove a bundled script was copied verbatim." }
       }
     },
@@ -135,26 +143,35 @@
         "fixed": { "$ref": "#/$defs/fixed_string" }
       }
     },
-    "java_disclaimer": {
+    "disclaimer": {
       "type": "object",
-      "description": "Every generated .java file starts with the AI-assisted disclaimer line and the verification-checklist pointer. Fails when no .java file exists.",
+      "description": "Every generated source file of the named API starts with the AI-assisted disclaimer line and the verification-checklist pointer. Fails when no such file exists.",
       "required": ["type"],
       "additionalProperties": false,
-      "properties": { "type": { "const": "java_disclaimer" } }
+      "properties": {
+        "type": { "const": "disclaimer" },
+        "api": { "$ref": "#/$defs/api", "description": "jcsmp checks every generated .java file; python checks every generated .py file." }
+      }
     },
     "compile": {
       "type": "object",
-      "description": "Run mvn compile on every generated pom.xml (two-project layouts compile each project). Any non-zero exit fails the case; a timeout is an infrastructure failure. Requires mvn on PATH.",
+      "description": "Compile or check every generated project of the named API (two-project layouts check each project). Any failure fails the case; a timeout is an infrastructure failure.",
       "required": ["type"],
       "additionalProperties": false,
-      "properties": { "type": { "const": "compile" } }
+      "properties": {
+        "type": { "const": "compile" },
+        "api": { "$ref": "#/$defs/api", "description": "jcsmp runs mvn compile on every generated pom.xml (requires mvn on PATH). python, for every generated requirements.txt, creates a fresh virtual environment outside the project, pip installs the requirements, runs py_compile on every .py file in the project, and imports every top-level module of the project (requires python3 with the venv module on PATH)." }
+      }
     },
-    "maven_release_match": {
+    "release_match": {
       "type": "object",
-      "description": "Every generated pom.xml carries the current sol-jcsmp release version published in the Maven Central metadata. A metadata fetch failure is an infrastructure failure, not a case failure.",
+      "description": "Every generated build file of the named API carries the current release of the Solace library, resolved from the authoritative registry at grading time. A registry fetch failure is an infrastructure failure, not a case failure.",
       "required": ["type"],
       "additionalProperties": false,
-      "properties": { "type": { "const": "maven_release_match" } }
+      "properties": {
+        "type": { "const": "release_match" },
+        "api": { "$ref": "#/$defs/api", "description": "jcsmp: every generated pom.xml carries the sol-jcsmp release from the Maven Central metadata. python: every generated requirements.txt carries the line solace-pubsubplus==<version>, where the version is the info.version from the PyPI JSON API." }
+      }
     },
     "llm_judge": {
       "type": "object",
@@ -176,10 +193,13 @@
     },
     "live_verify": {
       "type": "object",
-      "description": "Run the generated project's own verify.sh roundtrip against the broker named by the exported OUTPUT_EVAL_BROKER_* variables. verify.sh exit 0 passes; exit 2 (a broker or credential error) or a timeout is an infrastructure failure; any other exit fails. Skips, and reports the skip, when no broker is configured.",
+      "description": "Run the generated project's own verify.sh roundtrip against the broker named by the exported OUTPUT_EVAL_BROKER_* variables. verify.sh exit 0 passes; exit 2 (a broker or credential error) or a timeout is an infrastructure failure; any other exit fails. Skips, and reports the skip, when no broker is configured. A JCSMP project receives the broker values as command-line arguments. A Python project receives them in a config.json that the runner writes after the subject model finishes, with OUTPUT_EVAL_BROKER_TRUST_STORE as the trust store directory when it is set.",
       "required": ["type"],
       "additionalProperties": false,
-      "properties": { "type": { "const": "live_verify" } }
+      "properties": {
+        "type": { "const": "live_verify" },
+        "api": { "$ref": "#/$defs/api", "description": "jcsmp verifies the project beside the shallowest pom.xml; python verifies the project beside the shallowest requirements.txt." }
+      }
     }
   }
 }
