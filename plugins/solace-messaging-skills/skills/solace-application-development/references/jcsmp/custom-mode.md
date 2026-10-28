@@ -13,7 +13,7 @@ When the developer picks Custom, establish the design summary first (per `implem
 Custom offers FIVE knobs, and only these five. There is no sixth knob and no authentication knob; Basic username/password is the only auth this journey generates, exactly as on Quickstart and Solace Suggested, so it is never a Custom checklist item. Four of the five knobs reuse a `solace-suggested-mode.md` step; the fifth is defined in this file:
 
 1. **Secure session (TLS).** Apply `solace-suggested-mode.md` Step 1, the Secure branch: a `tcps://` host with explicit certificate validation. Do not restate that logic here; the overlay step is the source of truth.
-2. **HA channel values.** Apply `solace-suggested-mode.md` Step 2: the HA-failover question and the four reconnect channel values it gates.
+2. **HA channel values.** Apply `solace-suggested-mode.md` Step 2: the HA-failover question and the four reconnect channel values it gates. Unticked keeps the samples' reconnect baseline (`reconnectRetries` 20, `connectRetriesPerHost` 3), not the fail-fast default-channel posture; ticked applies the four HA values when the HA-failover question is answered yes.
 3. **DMQ eligibility.** Apply `solace-suggested-mode.md` Step 3: `setDMQEligible(true)` on every PERSISTENT publish, with the broker-side prerequisite stated as the developer's responsibility.
 4. **Decoupled projects.** Apply `solace-suggested-mode.md` Step 4: two separate, independent single-module Maven projects, one per role.
 5. **Admin-provisioned queue.** The one knob that is a real code change rather than a reused overlay step. It is defined in full in the "Admin-provisioned-queue knob" section below.

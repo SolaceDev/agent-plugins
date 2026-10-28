@@ -1,0 +1,44 @@
+# Implement: Request-Reply (Direct) leaf
+
+The per-leaf wiring for the Request-Reply (Direct) leaf of the Python API. Read this file from `implement-mode.md` Step 4 when the `Pattern` field is `Request-Reply (Direct)`. The shared Step 4 rules in `implement-mode.md` (the disclaimer header, the shared connection helper, the fixed file names, the concurrency rules, the variant discipline, the demo-harness rule, the comments rule, and the Quickstart fail-fast rule) apply here unchanged.
+
+Request-reply in the Python API uses direct messages only, so this is the ONLY Python request-reply leaf. There is no Request-Reply (Guaranteed) leaf and no guaranteed requestor or replier sample; a design that needs a persisted request is a Guaranteed Pub/Sub leaf (`design-mode.md` Step 2), never this one.
+
+## Request-reply flow
+
+Generation reads one requestor sample and the replier sample and adapts each into its own generated script, the same near-verbatim discipline the other leaves use. Direct request-reply is at-most-once on both legs: there is no broker receipt and no redelivery, so this leaf has NO queue, NO provisioning, and NO client acknowledgement. The API manages the reply: the requestor's `RequestReplyMessagePublisher` sets a unique reply-to on each request and correlates the reply, and the replier's `Replier.reply()` routes to that reply-to and copies the correlation. The requestor therefore needs no reply subscription and no correlation id of its own.
+
+- `python-direct-requestor-blocking-sample.py` (the BASE shape): basic-auth connect, a `RequestReplyMessagePublisher`, ONE blocking `publish_await_response()` with a POSITIVE `REQUEST_TIMEOUT_MS`, a `PubSubTimeoutError` catch with one retry to absorb a cold-start race, service event listeners registered before `connect()`, and a graceful SIGINT/SIGTERM shutdown. It exits 0 on a reply and 1 without one.
+- `python-direct-requestor-sample.py` (the VARIANT shape): the same, but several non-blocking `publish()` calls that each return a `concurrent.futures.Future`, so the requests are in flight together, then each Future collected for its reply or its `PubSubTimeoutError`. It exits 0 only when every request sent got a reply.
+- `python-direct-replier-sample.py`: basic-auth connect, a `RequestReplyMessageReceiver` built with the request topic subscription (no queue, no provisioning), an async `RequestMessageHandler` that guards on a `None` replier and answers with `replier.reply()`, service event listeners registered before `connect()`, and a graceful SIGINT/SIGTERM shutdown. It answers both requestor shapes.
+
+**Base shape and variant.** Generate the blocking requestor when the design summary's `Consumption endpoint` reads `API-managed reply (RequestReplyMessagePublisher)` (the default): one request at a time, the blocking call as the synchronization point, the same shape as the JCSMP direct requestor. When the summary records the VARIANT (for example `API-managed reply (RequestReplyMessagePublisher, non-blocking publish)`, chosen because many requests must be in flight at once), read the non-blocking sample instead. Read only the requestor sample the design chose, never both.
+
+Each script builds its OWN `MessagingService`. Keep the samples' structure: the shared state dataclass, `setup_solace(...)`, `connect_solace(...)`, the main step, and `teardown_solace(...)` in `main()`'s `finally`. Keep every listener and handler class.
+
+**Ground before you write.** Before writing either script, WebFetch [Request-Reply Messaging in the Solace Python API](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Request-Reply.md) in this session (SKILL.md Invariant 2).
+
+## Replier script (`direct_replier.py`)
+
+The replier subscribes directly to the request topic (no queue), answers each request, and is the long-running process the developer runs FIRST. Start the file with the disclaimer header, then wire it in this sequence:
+
+1. Build the connection properties with `load_service_properties(args, APP_NAME)`, then the service with `MessagingService.builder().from_properties(properties).build()` (on Quickstart without the reconnection strategy call, per the fail-fast rule).
+2. Build the receiver as the sample does: `request_reply().create_request_reply_message_receiver_builder().build(TopicSubscription.of(request_topic))` for the design summary's topic. Register the three service event listeners BEFORE `connect()`.
+3. `messaging_service.connect()`. Immediately after `connect()` returns, emit the connect marker: `trace("VERIFY: CONNECTED")`.
+4. `receiver.receive_async(handler)` BEFORE `receiver.start()`, as the sample orders them, then `receiver.start()`, which applies the request topic subscription and blocks until the broker confirms it. Immediately after `start()` returns, emit the subscribed marker: `trace("VERIFY: SUBSCRIBED")`. **No reapply-subscriptions setting.** The JCSMP direct replier must set `REAPPLY_SUBSCRIPTIONS` to `true`, or its request topic subscription is lost on an automatic reconnect. The Python API has no such setting and needs none: request-reply in the Python API uses direct messages only, and the [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Python/Python-API-Messaging-Service.md) page states that the API re-applies the application's direct subscriptions on reconnect. Do not search for or invent a Python equivalent. Keep the sample's `on_reconnected` comment that says so.
+5. In the handler's `on_message(message, replier)`, keep the sample's guard: a `None` replier means the message has no reply-to, so log it and return. After the guard, emit the request marker: `trace("VERIFY: REQUEST_RECEIVED")`. Then build the reply with the handler's one `message_builder()` and answer with `replier.reply(reply)`, inside the sample's `PubSubPlusClientError` catch. Use `replier.reply()`, never a manual publish to the reply-to: the API routes and correlates the reply.
+6. KEEP the long-running wait loop, the SIGINT/SIGTERM handler that only sets the shutdown event, and `teardown_solace(...)` with `terminate(grace_period)` and `disconnect()`. The replier is the SIGINT target, and its shutdown line (`Shutdown signal received ...`) stays a `trace(...)` call.
+
+## Requestor script (`direct_requestor_blocking.py`, or `direct_requestor.py` on the variant)
+
+The requestor connects, sends its request (or requests), collects the reply, and exits on its own. It does NOT provision anything and does NOT wait for a key press or a signal. Start the file with the disclaimer header, then wire it in this sequence:
+
+1. Build the connection properties and the service exactly as the replier does (step 1 above), then the requestor with `request_reply().create_request_reply_message_publisher_builder().build()`. Register the three service event listeners BEFORE `connect()`.
+2. `messaging_service.connect()`. Immediately after `connect()` returns, emit the connect marker: `trace("VERIFY: CONNECTED")`. Then `requestor.start()`.
+3. Base shape: build the request with `message_builder().build(payload)`, where `payload` is a `bytearray` or a `str`, never `bytes` (the demo-harness rule in `implement-mode.md`), and send it to the design summary's topic with `publish_await_response(..., reply_timeout=REQUEST_TIMEOUT_MS, ...)`. Keep the POSITIVE `REQUEST_TIMEOUT_MS` (the API has no default), the `PubSubTimeoutError` catch, and the single retry (`REQUEST_ATTEMPTS = 2`). Variant: keep the sample's send phase (one `publish(...)` per request, each returning a Future) and its collect phase (`future.result()` per request, a `PubSubTimeoutError` counted as a missing reply).
+4. When a reply arrives, emit the reply marker: `trace("VERIFY: REPLY_RECEIVED")`. On the variant, emit it once for each reply collected. Keep the sample's exit code rule: 1 when a request sent got no reply, 0 otherwise (a shutdown signal before the reply is a clean stop).
+5. Self-exit: return from the main step, and `teardown_solace(...)` in `main()`'s `finally` calls `terminate(grace_period)` and `disconnect()`. Keep the SIGINT/SIGTERM handler the sample carries, so Ctrl-C during the reply wait still reaches teardown. When the request describes a real application, its own request payload replaces the sample's text (the demo-harness rule).
+
+## The marker contract
+
+These four `VERIFY:` marker strings (`VERIFY: CONNECTED`, `VERIFY: SUBSCRIBED`, `VERIFY: REQUEST_RECEIVED`, `VERIFY: REPLY_RECEIVED`) are the same strings the JCSMP Request-Reply (Direct) leaf emits, character for character. They are read PER PROCESS: the replier output carries `SUBSCRIBED` and `REQUEST_RECEIVED`, the requestor output carries `REPLY_RECEIVED`, and both print `CONNECTED`. `verify.sh` reads these same strings in each process's own output (`implement-mode.md` Step 5), so never change one.

@@ -5,13 +5,13 @@
   <modelVersion>4.0.0</modelVersion>
 
   <!--
-    EVAL-02 compile-fixture template. Compiles the two baked JCSMP reference
+    EVAL-02 sample-check template. Compiles the two baked JCSMP reference
     samples (GuaranteedPublisher / GuaranteedSubscriber) VERBATIM against the
     latest sol-jcsmp resolved live from Maven Central. This pom only compiles;
     it never runs the samples, so it declares no run/exec plugin.
 
     The sol-jcsmp version is intentionally version-free here (Invariant 3): the
-    property default below is a NON-NUMERIC placeholder token that compile.sh
+    property default below is a NON-NUMERIC placeholder token that check-samples.sh
     overrides at run time with the live <release> from Maven Central metadata.
     No sol-jcsmp version number is committed anywhere. The log4j2 version below
     is FIXTURE-ONLY tooling (a concrete number so this CI fixture compiles
@@ -21,14 +21,14 @@
   -->
 
   <groupId>com.solace.samples</groupId>
-  <artifactId>jcsmp-compile-fixture</artifactId>
+  <artifactId>jcsmp-sample-check</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>11</maven.compiler.release>
-    <!-- Overridden by compile.sh via -Dsol.jcsmp.version=<live release>.
+    <!-- Overridden by check-samples.sh via -Dsol.jcsmp.version=<live release>.
          The default is a placeholder token, never a committed version number. -->
     <sol.jcsmp.version>RESOLVED_AT_GENERATION_TIME</sol.jcsmp.version>
   </properties>
@@ -42,12 +42,12 @@
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-api</artifactId>
-      <version>2.26.0</version>
+      <version>2.26.1</version>
     </dependency>
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-core</artifactId>
-      <version>2.26.0</version>
+      <version>2.26.1</version>
     </dependency>
   </dependencies>
 

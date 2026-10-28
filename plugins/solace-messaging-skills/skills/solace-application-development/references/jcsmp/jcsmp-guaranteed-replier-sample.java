@@ -157,8 +157,7 @@ public class GuaranteedReplier {
         final Queue requestQueue = JCSMPFactory.onlyInstance().createQueue(REQUEST_QUEUE_NAME);
 
         // ELEVATION: provision the durable request queue in-process and map the request
-        // topic onto it at startup, so a fresh broker works out of the box (the upstream
-        // sample provisions with flag 0, which throws "already exists" on a re-run).
+        // topic onto it at startup, so a fresh broker works out of the box.
         // best practice: confirm the broker allows client-side endpoint management first
         if (!session.isCapable(CapabilityType.ENDPOINT_MANAGEMENT)) {
             System.err.println("This client/broker does not allow client-side endpoint management; "
@@ -168,8 +167,8 @@ public class GuaranteedReplier {
         EndpointProperties endpointProps = new EndpointProperties();
         endpointProps.setAccessType(EndpointProperties.ACCESSTYPE_EXCLUSIVE);  // single-replier sample
         endpointProps.setPermission(EndpointProperties.PERMISSION_CONSUME);
-        // provision the durable request queue IDEMPOTENTLY so a re-run is safe (NOT the
-        // upstream flag 0, which throws on the second run)
+        // provision the durable request queue IDEMPOTENTLY so a re-run is safe (flag 0 would
+        // throw "already exists" on the second run)
         session.provision(requestQueue, endpointProps, JCSMPSession.FLAG_IGNORE_ALREADY_EXISTS);
         // map the request topic onto the queue with a subscription (PERSISTENT pub/sub onto
         // a queue); WAIT_FOR_CONFIRM blocks until the broker confirms the subscription
