@@ -135,11 +135,13 @@ public class GuaranteedSubscriberBlocking {
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
+            // set on every exit path, an uncaught exception included, so the shutdown hook
+            // does not report a signal when the JVM exits for another reason
+            isMainDone = true;
         }
         // non-zero after a failure, so scripts and supervisors see it. A signal-initiated
         // shutdown is already in progress and ends with the JVM's own signal exit status
         // (130 for SIGINT, 143 for SIGTERM): System.exit() would block during it.
-        isMainDone = true;
         if (exitCode != 0 && !isShutdownSignalled) {
             System.exit(exitCode);
         }
@@ -269,17 +271,28 @@ public class GuaranteedSubscriberBlocking {
 
     private static void processMessage(InboundMessage message) {
         msgRecvCounter++;
-        // the publisher sample sends a byte[] payload (the binary attachment), read back
-        // with getPayloadAsBytes()
-        byte[] payload = message.getPayloadAsBytes();
-        if (payload != null) {
-            trace(API + " " + APP_NAME + " received: " + new String(payload, StandardCharsets.UTF_8));
-        }
-        if (message.isRedelivered()) {  // useful check
-            // this is the broker telling the consumer that this message has been sent and not ACKed before.
-            // this can happen if an exception is thrown, or the broker restarts, or the network disconnects
-            // perhaps an error in processing? Should do extra checks to avoid duplicate processing
-            hasDetectedRedelivery = true;
+        try {
+            // the publisher sample sends a byte[] payload (the binary attachment), read back
+            // with getPayloadAsBytes()
+            byte[] payload = message.getPayloadAsBytes();
+            if (payload != null) {
+                trace(API + " " + APP_NAME + " received: " + new String(payload, StandardCharsets.UTF_8));
+            }
+            if (message.isRedelivered()) {  // useful check
+                // this is the broker telling the consumer that this message has been sent and not ACKed before.
+                // this can happen if an exception is thrown, or the broker restarts, or the network disconnects
+                // perhaps an error in processing? Should do extra checks to avoid duplicate processing
+                hasDetectedRedelivery = true;
+            }
+        } catch (RuntimeException e) {
+            // still ACK below. Without this catch, the exception ends
+            // the receive loop and the application. The failed message leaves the queue: do
+            // not use this if the application cannot lose it. To NACK explicitly instead,
+            // build the receiver with
+            // withRequiredMessageClientOutcomeOperationSupport(Outcome.FAILED, Outcome.REJECTED)
+            // and call receiver.settle(message, outcome).
+            logger.error("Processing failed for message id " + message.getApplicationMessageId()
+                    + "; acknowledging anyway", e);
         }
         // Messages are removed from the broker queue when the ACK is received.
         // ACK only after processing is complete: DO NOT ACK until all processing/storing

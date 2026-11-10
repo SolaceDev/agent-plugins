@@ -27,8 +27,9 @@
  * The config.json reader is a deliberately minimal parser for a flat, string-keyed
  * file. It avoids adding a JSON-library dependency so the samples keep their single
  * Solace dependency (solace-messaging-client); it is NOT a general-purpose JSON parser
- * and reads only flat string key/value pairs (string pairs anywhere in the file are
- * read as if flat, so keep config.json a single flat object).
+ * and reads only flat key/value pairs (pairs anywhere in the file are read as if flat,
+ * so keep config.json a single flat object). A number or boolean value is read as its
+ * text, because every Java API property value is a string.
  *
  * Grounding: the Properties-based MessagingService configuration and its property keys:
  *   https://docs.solace.com/API/API-Developer-Guide-Java/Java-Messaging-Service.md
@@ -55,9 +56,11 @@ public final class SolaceConnectionConfig {
 
     private static final String CONFIG_FILE = "config.json";
 
-    // every flat string key/value pair matches a "key": "value" form; both sides unescape
-    private static final Pattern STRING_PAIR = Pattern.compile(
-            "\"((?:\\\\.|[^\"\\\\])*)\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+    // every flat key/value pair matches a "key": "value" form (both sides unescape), or a
+    // "key": value form with a bare number or boolean, kept as its text
+    private static final Pattern PAIR = Pattern.compile(
+            "\"((?:\\\\.|[^\"\\\\])*)\"\\s*:\\s*"
+            + "(?:\"((?:\\\\.|[^\"\\\\])*)\"|(-?[0-9][0-9.eE+-]*|true|false))");
 
     // all loaded properties, keyed by Java API property-name strings ("solace.messaging.transport.host", ...)
     private final Map<String, String> properties;
@@ -143,7 +146,7 @@ public final class SolaceConnectionConfig {
         } catch (IOException e) {
             throw new UncheckedIOException("Unable to read " + CONFIG_FILE, e);
         }
-        Map<String, String> parsed = parseFlatStringPairs(json);
+        Map<String, String> parsed = parseFlatPairs(json);
         for (String required : new String[] {
                 TransportLayerProperties.HOST, ServiceProperties.VPN_NAME,
                 AuthenticationProperties.SCHEME_BASIC_USER_NAME}) {
@@ -154,12 +157,13 @@ public final class SolaceConnectionConfig {
         return new SolaceConnectionConfig(parsed);
     }
 
-    /** Read every flat string key/value pair; a later duplicate of a key wins. */
-    private static Map<String, String> parseFlatStringPairs(String json) {
+    /** Read every flat key/value pair; a later duplicate of a key wins. */
+    private static Map<String, String> parseFlatPairs(String json) {
         Map<String, String> pairs = new LinkedHashMap<>();
-        Matcher matcher = STRING_PAIR.matcher(json);
+        Matcher matcher = PAIR.matcher(json);
         while (matcher.find()) {
-            pairs.put(unescape(matcher.group(1)), unescape(matcher.group(2)));
+            String value = matcher.group(2) != null ? unescape(matcher.group(2)) : matcher.group(3);
+            pairs.put(unescape(matcher.group(1)), value);
         }
         return pairs;
     }
@@ -172,7 +176,7 @@ public final class SolaceConnectionConfig {
         return value;
     }
 
-    /** Minimal JSON string unescaping for the sequences a connection value may contain. */
+    /** JSON string unescaping: the two-character escapes and the \\uXXXX form. */
     private static String unescape(String raw) {
         StringBuilder sb = new StringBuilder(raw.length());
         for (int i = 0; i < raw.length(); i++) {
@@ -183,6 +187,19 @@ public final class SolaceConnectionConfig {
                     case 'n': sb.append('\n'); break;
                     case 't': sb.append('\t'); break;
                     case 'r': sb.append('\r'); break;
+                    case 'b': sb.append('\b'); break;
+                    case 'f': sb.append('\f'); break;
+                    case 'u':
+                        if (i + 4 >= raw.length()) {
+                            throw new IllegalStateException(CONFIG_FILE + " has an incomplete \\u escape");
+                        }
+                        try {
+                            sb.append((char) Integer.parseInt(raw.substring(i + 1, i + 5), 16));
+                        } catch (NumberFormatException e) {
+                            throw new IllegalStateException(CONFIG_FILE + " has an invalid \\u escape", e);
+                        }
+                        i += 4;
+                        break;
                     default:  sb.append(next); break;  // covers \" \\ and \/
                 }
             } else {

@@ -133,11 +133,13 @@ public class DirectSubscriberBlocking {
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
+            // set on every exit path, an uncaught exception included, so the shutdown hook
+            // does not report a signal when the JVM exits for another reason
+            isMainDone = true;
         }
         // non-zero after a failure, so scripts and supervisors see it. A signal-initiated
         // shutdown is already in progress and ends with the JVM's own signal exit status
         // (130 for SIGINT, 143 for SIGTERM): System.exit() would block during it.
-        isMainDone = true;
         if (exitCode != 0 && !isShutdownSignalled) {
             System.exit(exitCode);
         }

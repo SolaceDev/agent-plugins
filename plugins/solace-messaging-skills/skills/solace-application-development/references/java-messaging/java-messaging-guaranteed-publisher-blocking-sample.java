@@ -124,16 +124,23 @@ public class GuaranteedPublisherBlocking {
                 } catch (InterruptedException e) {
                     // nothing more we can do; the JVM is halting
                 }
+                if (mainThread.isAlive()) {
+                    // terminate() of a persistent publisher does not return while the service
+                    // is in an automatic reconnect, so the teardown cannot finish in that case
+                    trace("Teardown did not finish in " + SHUTDOWN_WAIT_MS + " ms; exiting without a clean disconnect.");
+                }
             }));
             runPublishLoop();
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
+            // set on every exit path, an uncaught exception included, so the shutdown hook
+            // does not report a signal when the JVM exits for another reason
+            isMainDone = true;
         }
         // non-zero after a failure, so scripts and supervisors see it. A signal-initiated
         // shutdown is already in progress and ends with the JVM's own signal exit status
         // (130 for SIGINT, 143 for SIGTERM): System.exit() would block during it.
-        isMainDone = true;
         if (exitCode != 0 && !isShutdownSignalled) {
             System.exit(exitCode);
         }
@@ -238,21 +245,24 @@ public class GuaranteedPublisherBlocking {
                 // can still be delivered
                 logger.warn(String.format("No ACK for Message ID %s within %d ms; discarding it",
                         msgId, PUBLISH_ACK_TIMEOUT_MS));
-            } catch (PubSubPlusClientException.MessageRejectedByBrokerException
-                    | PubSubPlusClientException.MessageNotAcknowledgedByBrokerException
-                    | PubSubPlusClientException.MessageDestinationDoesNotExistException e) {
-                // NACK: the broker did not persist the message, and the exception says why (for
-                // example MessageDestinationDoesNotExistException when no queue subscribes to the
-                // topic and the client-profile rejects on no subscription match)
-                logger.warn(String.format("NACK for Message ID %s; discarding it - %s", msgId, e));
             } catch (PubSubPlusClientException.PublisherOverflowException e) {
                 // the API reference lists it for this call; with one message in flight and the
                 // default back-pressure setting, the publish buffer does not overflow
                 logger.warn(String.format("Publish buffer overflow for Message ID %s; discarding it - %s", msgId, e));
-            } catch (InterruptedException e) {
-                // interrupted while waiting for the ACK: probably shutting down
+            } catch (InterruptedException | PubSubPlusClientException.RequestInterruptedException e) {
+                // interrupted while waiting for the ACK: probably shutting down. The API
+                // reports the interrupt as a RequestInterruptedException.
                 Thread.currentThread().interrupt();  // preserve interrupt
                 isShutdown = true;
+            } catch (PubSubPlusClientException e) {
+                // NACK: the broker did not persist the message, and the exception says why (for
+                // example the queue is over its quota, or no queue subscribes to the topic and
+                // the client-profile rejects on no subscription match). The API reference lists
+                // MessageRejectedByBrokerException, MessageNotAcknowledgedByBrokerException, and
+                // MessageDestinationDoesNotExistException for this call, but a NACK arrives as
+                // the base PubSubPlusClientException with the broker error as its cause, so
+                // catch the base type. This catch must come after the more specific ones above.
+                logger.warn(String.format("NACK for Message ID %s; discarding it - %s", msgId, e));
             } catch (RuntimeException e) {
                 // the message cannot be sent (for example the service is down or the publisher
                 // is terminated) and retrying would not help

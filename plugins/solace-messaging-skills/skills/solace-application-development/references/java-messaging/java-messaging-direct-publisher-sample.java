@@ -87,6 +87,10 @@ public class DirectPublisher {
     private static volatile boolean isShutdownSignalled = false;      // SIGINT/SIGTERM started a JVM shutdown
     private static volatile boolean isMainDone = false;               // main finished its teardown
     private static volatile int exitCode = 0;                         // set to 1 on a failure exit
+    // guards isPublishLoopDone: the shutdown hook interrupts the main thread only while
+    // the publish loop can still wait in publish()
+    private static final Object shutdownLock = new Object();
+    private static boolean isPublishLoopDone = false;
     private static MessagingService messagingService;
     private static DirectMessagePublisher publisher;
     private static ScheduledExecutorService statsPrintingThread;
@@ -108,6 +112,14 @@ public class DirectPublisher {
                 isShutdownSignalled = true;
                 trace("Shutdown signal received, stopping publisher...");
                 isShutdown = true;
+                // a publish() that waits on back pressure (a full buffer, for example during
+                // an automatic reconnect) does not see the flag: interrupt it, so the main
+                // thread always reaches teardownSolace()
+                synchronized (shutdownLock) {
+                    if (!isPublishLoopDone) {
+                        mainThread.interrupt();
+                    }
+                }
                 try {
                     mainThread.join(SHUTDOWN_WAIT_MS);  // wait for the main thread's buffer drain and disconnect
                 } catch (InterruptedException e) {
@@ -118,11 +130,13 @@ public class DirectPublisher {
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
+            // set on every exit path, an uncaught exception included, so the shutdown hook
+            // does not report a signal when the JVM exits for another reason
+            isMainDone = true;
         }
         // non-zero after a failure, so scripts and supervisors see it. A signal-initiated
         // shutdown is already in progress and ends with the JVM's own signal exit status
         // (130 for SIGINT, 143 for SIGTERM): System.exit() would block during it.
-        isMainDone = true;
         if (exitCode != 0 && !isShutdownSignalled) {
             System.exit(exitCode);
         }
@@ -219,6 +233,15 @@ public class DirectPublisher {
                 // full, publish() blocks until the reconnect completes.
                 publisher.publish(message, Topic.of(topicString));
                 msgSentCounter++;
+            } catch (PubSubPlusClientException.RequestInterruptedException e) {
+                // interrupted while publish() waited on back pressure: this message was not sent
+                if (isShutdownSignalled) {  // the shutdown hook did it: a normal stop
+                    logger.info("publish() interrupted by the shutdown signal; the message in hand was not sent");
+                } else {
+                    logger.error("### publish() was interrupted, quitting", e);
+                    exitCode = 1;
+                }
+                isShutdown = true;
             } catch (RuntimeException e) {  // threw from publish(): the service is down or the publisher is terminated
                 logger.error("### Caught while trying to publisher.publish(), quitting", e);
                 exitCode = 1;
@@ -235,6 +258,12 @@ public class DirectPublisher {
         // EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, or an
         // exception), so Solace teardown and application-side cleanup are never skipped.
         isShutdown = true;
+        // the publish loop is over: stop the shutdown hook from interrupting this thread, and
+        // clear an interrupt it already sent, so the blocking calls below run to completion
+        synchronized (shutdownLock) {
+            isPublishLoopDone = true;
+            Thread.interrupted();
+        }
         if (statsPrintingThread != null) {
             statsPrintingThread.shutdown();  // stop printing stats
         }

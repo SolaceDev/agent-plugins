@@ -65,11 +65,13 @@ public class GuaranteedSubscriber {
     // topic to map onto the queue; matches the publisher sample's topic root
     private static final String TOPIC_NAME = "solace/samples/java/pers/pub/>";
     private static final String API = "Java";
-    // terminate(gracePeriod): how long the message handler gets to process (and ACK) the
-    // messages the API has already received before the receiver stops; terminate() throws
-    // IncompleteMessageDeliveryException when messages are still in its buffer after that.
-    // Those messages were never ACKed, so they stay on the queue and are redelivered. The
-    // API default is 600000 ms (10 minutes).
+    // terminate(gracePeriod): how long the message handler gets to take the messages the API
+    // has already received out of its buffer before the receiver stops; terminate() throws
+    // IncompleteMessageDeliveryException when messages are still in the buffer after that.
+    // terminate() unbinds from the queue BEFORE the grace period starts, so an ack() made
+    // during the grace period fails. For that reason the handler skips these messages (see
+    // QueueMessageHandler): they were never ACKed, so they stay on the queue and are
+    // redelivered. The API default is 600000 ms (10 minutes).
     private static final long TERMINATE_GRACE_PERIOD_MS = 10_000;
     // how long the shutdown hook waits for main's teardown: the grace period plus a margin
     // for the disconnect. The JVM halts when the hook returns.
@@ -81,6 +83,10 @@ public class GuaranteedSubscriber {
     private static volatile boolean isShutdownSignalled = false;    // SIGINT/SIGTERM started a JVM shutdown
     private static volatile boolean isMainDone = false;             // main finished its teardown
     private static volatile int exitCode = 0;                       // set to 1 on a failure exit
+    // held by the handler while it processes and ACKs one message, and taken by
+    // teardownSolace() before terminate(), so no message is between processing and ACK
+    // when the receiver unbinds
+    private static final Object processingLock = new Object();
     private static MessagingService messagingService;
     private static PersistentMessageReceiver receiver;
 
@@ -94,7 +100,7 @@ public class GuaranteedSubscriber {
             if (setupSolace(args)) {
                 // graceful shutdown: a SIGINT (Ctrl-C) or SIGTERM signals the main loop to
                 // stop, then the hook joins the main thread so the cleanup in
-                // teardownSolace() (stop the receiver, finish outstanding ACKs, disconnect)
+                // teardownSolace() (finish the message in hand, stop the receiver, disconnect)
                 // runs to completion before the JVM halts. The JVM exits as soon as all
                 // shutdown hooks return, so the hook must wait, not just set a flag.
                 final Thread mainThread = Thread.currentThread();
@@ -106,7 +112,7 @@ public class GuaranteedSubscriber {
                     trace("Shutdown signal received, stopping consumer...");
                     isShutdown = true;
                     try {
-                        mainThread.join(SHUTDOWN_WAIT_MS);  // wait for the main thread's receiver stop, ACK drain, and disconnect
+                        mainThread.join(SHUTDOWN_WAIT_MS);  // wait for the main thread's receiver stop and disconnect
                     } catch (InterruptedException e) {
                         // nothing more we can do; the JVM is halting
                     }
@@ -116,11 +122,13 @@ public class GuaranteedSubscriber {
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
+            // set on every exit path, an uncaught exception included, so the shutdown hook
+            // does not report a signal when the JVM exits for another reason
+            isMainDone = true;
         }
         // non-zero after a failure, so scripts and supervisors see it. A signal-initiated
         // shutdown is already in progress and ends with the JVM's own signal exit status
         // (130 for SIGINT, 143 for SIGTERM): System.exit() would block during it.
-        isMainDone = true;
         if (exitCode != 0 && !isShutdownSignalled) {
             System.exit(exitCode);
         }
@@ -235,17 +243,23 @@ public class GuaranteedSubscriber {
         // EVERY exit path (normal quit, SIGINT/SIGTERM, service interruption, receiver
         // termination, or an exception), so Solace teardown and application-side cleanup
         // are never skipped.
-        isShutdown = true;
+        // wait for the handler to finish and ACK the message it has in hand. From here on the
+        // handler skips every message, so no message is processed without its ACK.
+        synchronized (processingLock) {
+            isShutdown = true;
+        }
         if (receiver != null && receiver.isRunning()) {
-            // gracefully stop the receiver and finish outstanding ACKs before exit: terminate()
-            // stops delivery from the broker, then gives the handler up to the grace period to
-            // process the messages already received. Terminate the receiver before the
-            // disconnect: disconnect() stops it at once and discards its buffer.
+            // gracefully stop the receiver: terminate() unbinds from the queue, then gives the
+            // handler up to the grace period to take the messages already received out of the
+            // buffer. The handler skips them without an ACK, so the broker redelivers them.
+            // Terminate the receiver before the disconnect: disconnect() stops it at once
+            // and discards its buffer.
             try {
                 receiver.terminate(TERMINATE_GRACE_PERIOD_MS);
             } catch (PubSubPlusClientException.IncompleteMessageDeliveryException e) {
-                // those messages were never ACKed, so they stay on the queue and are
-                // redelivered: a normal stop, not a failure
+                // the handler did not empty the buffer inside the grace period. Those messages
+                // were never ACKed, so they stay on the queue and are redelivered: a normal
+                // stop, not a failure
                 logger.warn("Receiver stopped with unprocessed messages in its buffer; the broker redelivers them", e);
             } catch (RuntimeException e) {
                 logger.error("Receiver terminate() failed", e);
@@ -273,6 +287,43 @@ public class GuaranteedSubscriber {
 
         @Override
         public void onMessage(InboundMessage message) {
+            // processing and ACK of one message are one unit under processingLock:
+            // teardownSolace() takes the same lock before terminate()
+            synchronized (processingLock) {
+                if (isShutdown) {
+                    // shutting down: the receiver is about to unbind (or already did), and an
+                    // ack() after the unbind fails. Do not process the message; it was not
+                    // ACKed, so it stays on the queue and the broker redelivers it (with the
+                    // redelivered flag set, although this application did not process it).
+                    return;
+                }
+                try {
+                    processMessage(message);
+                } catch (RuntimeException e) {
+                    // still ACK below. Without this catch, the API only logs
+                    // the exception and the message stays unacknowledged on the flow. The failed
+                    // message leaves the queue: do not use this if the application cannot lose it.
+                    // To NACK explicitly instead, build the receiver with
+                    // withRequiredMessageClientOutcomeOperationSupport(Outcome.FAILED, Outcome.REJECTED)
+                    // and call receiver.settle(message, outcome).
+                    logger.error("Processing failed for message id " + message.getApplicationMessageId()
+                            + "; acknowledging anyway", e);
+                }
+                // Messages are removed from the broker queue when the ACK is received.
+                // ACK only after processing is complete: DO NOT ACK until all processing/storing
+                // of this message is done. NOTE that messages can be acknowledged from a different thread.
+                try {
+                    receiver.ack(message);  // ACKs are asynchronous
+                } catch (RuntimeException e) {
+                    // the ACK did not reach the API (for example the broker terminated the receiver,
+                    // or the service went down): the message stays on the queue and is redelivered
+                    logger.warn("ACK failed for message id " + message.getApplicationMessageId()
+                            + "; the broker redelivers it", e);
+                }
+            }
+        }
+
+        private void processMessage(InboundMessage message) {
             msgRecvCounter++;
             // the publisher sample sends a byte[] payload (the binary attachment), read back
             // with getPayloadAsBytes()
@@ -285,17 +336,6 @@ public class GuaranteedSubscriber {
                 // this can happen if an exception is thrown, or the broker restarts, or the network disconnects
                 // perhaps an error in processing? Should do extra checks to avoid duplicate processing
                 hasDetectedRedelivery = true;
-            }
-            // Messages are removed from the broker queue when the ACK is received.
-            // ACK only after processing is complete: DO NOT ACK until all processing/storing
-            // of this message is done. NOTE that messages can be acknowledged from a different thread.
-            try {
-                receiver.ack(message);  // ACKs are asynchronous
-            } catch (RuntimeException e) {
-                // the ACK did not reach the API (for example the broker terminated the receiver,
-                // or the service went down): the message stays on the queue and is redelivered
-                logger.warn("ACK failed for message id " + message.getApplicationMessageId()
-                        + "; the broker redelivers it", e);
             }
         }
     }
