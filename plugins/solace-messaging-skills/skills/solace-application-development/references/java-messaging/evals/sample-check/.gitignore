@@ -1,0 +1,6 @@
+# Eclipse / m2e IDE metadata (auto-generated when the fixture is opened as a Maven project)
+.classpath
+.project
+.settings/
+# Maven build output
+target/

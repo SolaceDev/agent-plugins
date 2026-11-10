@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    Sample-check fixture for the Solace Messaging API for Java. Compiles the baked
+    java-messaging reference samples VERBATIM against the latest
+    solace-messaging-client resolved live from Maven Central. This pom only
+    compiles; it never runs the samples, so it declares no run/exec plugin.
+
+    The solace-messaging-client version is intentionally version-free here
+    (Invariant 3): the property default below is a NON-NUMERIC placeholder token
+    that check-samples.sh overrides at run time with the live <release> from Maven
+    Central metadata. No version number of the API is committed anywhere. The Java
+    API brings sol-jcsmp in transitively, so the fixture does not declare it.
+
+    The log4j2 version below is FIXTURE-ONLY tooling (a concrete number so this CI
+    fixture compiles deterministically, at/above the 2.17.1 Log4Shell floor); it is
+    NOT a skill rule. log4j-jcl routes the API's own Apache Commons Logging output
+    to log4j2, as the Java API logging page shows.
+  -->
+
+  <groupId>com.solace.samples</groupId>
+  <artifactId>java-messaging-sample-check</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>11</maven.compiler.release>
+    <!-- Overridden by check-samples.sh via -Dsolace.messaging.client.version=<live release>.
+         The default is a placeholder token, never a committed version number. -->
+    <solace.messaging.client.version>RESOLVED_AT_GENERATION_TIME</solace.messaging.client.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.solace</groupId>
+      <artifactId>solace-messaging-client</artifactId>
+      <version>${solace.messaging.client.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-api</artifactId>
+      <version>2.26.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <version>2.26.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-jcl</artifactId>
+      <version>2.26.1</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>11</release>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
