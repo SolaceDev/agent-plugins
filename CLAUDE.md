@@ -29,7 +29,6 @@ claude plugin validate . --strict                # marketplace and plugin manife
 ./tools/check-links.sh plugins                   # broken and soft-404 doc links
 ./plugins/solace-messaging-skills/skills/solace-application-development/references/jcsmp/evals/sample-check/check-samples.sh    # check the baked JCSMP samples (compile and config smoke)
 ./plugins/solace-messaging-skills/skills/solace-application-development/references/python/evals/sample-check/check-samples.sh   # check the baked Python samples (python3 and PyPI access)
-./plugins/solace-messaging-skills/skills/solace-application-development/references/java-messaging/evals/sample-check/check-samples.sh   # check the baked Java API samples (compile and config smoke)
 claude --plugin-dir plugins/solace-messaging-skills   # load the plugin from the clone
 ```
 
@@ -49,7 +48,7 @@ The trigger runner has no single-case mode; set `TRIGGER_EVAL_RUNS=1` for a quic
 - Link documentation to the live `docs.solace.com` `.md` URL. Do not copy doc content into a skill. Every link under `plugins/` must pass `check-links.sh`.
 - A new skill needs cases in both `trigger-evals.json` (positive and near-miss negative prompts) and `output-evals.json` (validate the latter against `tools/output-evals.schema.json`).
 - A new, removed, or renamed plugin directory needs the matching `marketplace.json` change in the same pull request.
-- A new baked JCSMP sample must be added to the sample roster in `jcsmp/evals/sample-check/check-samples.sh`, or the sample check does not cover it. A new baked Python sample goes into the roster in `python/evals/sample-check/check-samples.sh`; `check_samples.py` picks it up from there. A new baked Java API sample goes into the roster in `java-messaging/evals/sample-check/check-samples.sh`.
+- A new baked JCSMP sample must be added to the sample roster in `jcsmp/evals/sample-check/check-samples.sh`, or the sample check does not cover it. A new baked Python sample goes into the roster in `python/evals/sample-check/check-samples.sh`; `check_samples.py` picks it up from there.
 - Do not put exact counts (of cases, skills, or graders) in READMEs or skill docs. They go stale.
 
 ## Gotchas / do not
