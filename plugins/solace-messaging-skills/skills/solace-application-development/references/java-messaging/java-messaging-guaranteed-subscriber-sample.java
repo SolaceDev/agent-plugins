@@ -300,14 +300,26 @@ public class GuaranteedSubscriber {
                 try {
                     processMessage(message);
                 } catch (RuntimeException e) {
-                    // still ACK below. Without this catch, the API only logs
-                    // the exception and the message stays unacknowledged on the flow. The failed
-                    // message leaves the queue: do not use this if the application cannot lose it.
-                    // To NACK explicitly instead, build the receiver with
-                    // withRequiredMessageClientOutcomeOperationSupport(Outcome.FAILED, Outcome.REJECTED)
-                    // and call receiver.settle(message, outcome).
+                    // WARNING, MESSAGE LOSS BY DESIGN: this sample discards a message that fails
+                    // processing. The failed message is ACKed below and leaves the queue for good.
+                    // Without this catch the API only logs the exception, and the message stays
+                    // unacknowledged on the flow.
+                    //
+                    // Do NOT use this strategy if the application cannot tolerate message loss.
+                    // Alternatives:
+                    //   1. Do not ACK: return without the ack() call. The message stays on the queue
+                    //      and the broker redelivers it after the next bind (risk: a poison-message
+                    //      loop when the same message fails every time).
+                    //   2. NACK explicitly: build the receiver with
+                    //      withRequiredMessageClientOutcomeOperationSupport(Outcome.FAILED, Outcome.REJECTED)
+                    //      and call receiver.settle(message, outcome). Outcome.FAILED: the broker
+                    //      redelivers the message, and can move it to the DMQ (dead message queue)
+                    //      once the queue's max redelivery count is reached. Outcome.REJECTED: no
+                    //      redelivery; the broker moves the message to the DMQ, or deletes it when
+                    //      no DMQ is configured.
+                    //   3. Retry the processing a bounded number of times before the discard.
                     logger.error("Processing failed for message id " + message.getApplicationMessageId()
-                            + "; acknowledging anyway", e);
+                            + "; acknowledging anyway (the message is discarded)", e);
                 }
                 // Messages are removed from the broker queue when the ACK is received.
                 // ACK only after processing is complete: DO NOT ACK until all processing/storing
