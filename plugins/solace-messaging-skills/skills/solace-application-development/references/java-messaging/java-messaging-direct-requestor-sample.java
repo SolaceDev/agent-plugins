@@ -67,7 +67,7 @@ public class DirectRequestor {
     // request topic the replier subscribes to; matches the direct replier samples
     private static final String REQUEST_TOPIC = "solace/samples/java/direct/request";
     private static final String API = "Java";
-    // how many requests go out before the first reply is handled
+    // how many requests go out
     private static final int REQUEST_COUNT = 5;
     // POSITIVE reply timeout in MILLISECONDS, per request: the reply handler gets the
     // correlated reply, or a TimeoutException once this long passes without one. The API has
@@ -178,7 +178,8 @@ public class DirectRequestor {
         });
         messagingService.connect();  // blocking connect
 
-        // request-reply publisher: the API sets a unique reply-to topic on each request and
+        // request-reply publisher: the API sets the reply-to topic (the service's own inbox
+        // topic, the same for every request) and a unique correlation id on each request, and
         // correlates each reply to its request, so the requestor needs no reply subscription
         // and no correlation id of its own. Its builder has no back-pressure method (unlike
         // the direct publisher), so there is nothing more to configure.
@@ -196,8 +197,9 @@ public class DirectRequestor {
         Topic requestTopic = Topic.of(REQUEST_TOPIC);
         trace(String.format("%s sending %d direct requests to topic '%s' (timeout %d ms each).",
                 APP_NAME, REQUEST_COUNT, REQUEST_TOPIC, REQUEST_TIMEOUT_MS));
-        // send phase: publish() returns at once and the API waits for each reply on its own
-        // thread, so every request is in flight before the first result is handled
+        // send phase: publish() returns at once and the API delivers each result on its own
+        // threads, so the requests are in flight together. A result can arrive before the
+        // last request goes out.
         int requestsSent = 0;
         for (int count = 1; count <= REQUEST_COUNT && !isShutdown; count++) {  // a shutdown signal or a service interruption: send no further request
             // an application message id lets the replier echo it onto the reply for
@@ -212,8 +214,10 @@ public class DirectRequestor {
                 // the message id goes in as the user context: the API hands it back to the
                 // reply handler with the result of this request, so the handler can name the
                 // request in a timeout or a failure, where there is no reply message. A
-                // request that cannot go out (for example the service is down) is not thrown
-                // here: the API reports it to the reply handler.
+                // request that cannot go out while the requestor runs (for example during a
+                // reconnect attempt) is not thrown here: the API reports it to the reply
+                // handler. After a service interruption the requestor is terminated, and
+                // publish() throws.
                 requestor.publish(request, replyHandler, msgId, requestTopic, REQUEST_TIMEOUT_MS);
                 requestsSent++;
             } catch (RuntimeException e) {  // threw from publish(): the requestor is terminated; a retry would not help
@@ -280,21 +284,26 @@ public class DirectRequestor {
     ////////////////////////////////////////////////////////////////////////////
 
     /** Very simple static inner class, used for handling the result of each request: the
-     *  correlated reply, the timeout, or the failure. Runs on an API thread: return promptly,
-     *  since the results of the other requests wait while it runs. **/
+     *  correlated reply, the timeout, or the failure. Runs on API threads: the replies, the
+     *  timeouts, and the failures each arrive on a different thread, so two calls can run at
+     *  the same time. Keep the state it shares thread-safe, and return promptly, since the
+     *  results behind it on the same thread wait while it runs. **/
     private static class ReplyHandler implements ReplyMessageHandler {
 
         @Override
         public void onMessage(InboundMessage message, Object userContext, PubSubPlusClientException exception) {
             try {
                 if (exception == null) {  // the correlated reply
-                    replyCounter.incrementAndGet();
                     // the replier samples send a byte[] payload (the binary attachment), read
                     // back with getPayloadAsBytes()
                     byte[] payload = message.getPayloadAsBytes();
                     String text = payload != null ? new String(payload, StandardCharsets.UTF_8) : message.getPayloadAsString();
                     trace(API + " " + APP_NAME + " received a correlated reply (message id "
                             + message.getApplicationMessageId() + "): " + text);
+                    // count the reply only after it is processed: the API catches an exception
+                    // that escapes this handler, so a reply that fails in processing must not
+                    // count, and the requestor then exits with code 1
+                    replyCounter.incrementAndGet();
                 } else if (exception instanceof PubSubPlusClientException.TimeoutException) {
                     // no reply within REQUEST_TIMEOUT_MS: no replier answered, or the request
                     // or the reply was lost (at-most-once). userContext is the message id.

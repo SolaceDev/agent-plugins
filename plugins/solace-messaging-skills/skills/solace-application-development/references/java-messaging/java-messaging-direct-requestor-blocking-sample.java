@@ -166,7 +166,8 @@ public class DirectRequestorBlocking {
         });
         messagingService.connect();  // blocking connect
 
-        // request-reply publisher: the API sets a unique reply-to topic on each request and
+        // request-reply publisher: the API sets the reply-to topic (the service's own inbox
+        // topic, the same for every request) and a unique correlation id on each request, and
         // correlates the reply, so the requestor needs no reply subscription and no
         // correlation id of its own. Its builder has no back-pressure method (unlike the
         // direct publisher), so there is nothing more to configure.

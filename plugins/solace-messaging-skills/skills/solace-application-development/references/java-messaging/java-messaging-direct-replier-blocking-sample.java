@@ -22,17 +22,17 @@
  * with the request topic subscription (no queue, no provisioning) and
  * capacity-bounded buffers for the requests and the replies, a main loop that calls
  * receiveMessage(handler, timeout), whose RequestMessageHandler guards on a replier
- * (a request without a reply-to cannot be answered) and answers each request with
- * replier.reply(), which routes to the request's reply-to and copies the correlation,
- * a ReplyFailureListener for the reply failures the API reports asynchronously,
- * service event listeners registered BEFORE connect(), and a graceful SIGINT/SIGTERM
- * shutdown. Request-reply in the Java API is direct only, so it is at-most-once on
- * both legs: a reply that cannot go out is logged and discarded, and the requestor
- * times out. A service interruption or a receive failure stops the replier with exit
- * code 1. Answers both requestor samples. The non-blocking variant is
- * java-messaging-direct-replier-sample.java. Structured as setupSolace(...),
- * receiveRequests(), and teardownSolace(), with teardown run from main's finally on
- * every exit path.
+ * (a message without a reply-to or a correlation id cannot be answered), detects
+ * discards, and answers each request with replier.reply(), which routes to the
+ * request's reply-to and copies the correlation, a ReplyFailureListener for the reply
+ * failures the API reports asynchronously, service event listeners registered BEFORE
+ * connect(), and a graceful SIGINT/SIGTERM shutdown. Request-reply in the Java API is
+ * direct only, so it is at-most-once on both legs: a reply that cannot go out is
+ * logged and discarded, and the requestor times out. A service interruption or a
+ * receive failure stops the replier with exit code 1. Answers both requestor samples.
+ * The non-blocking variant is java-messaging-direct-replier-sample.java. Structured
+ * as setupSolace(...), receiveRequests(), and teardownSolace(), with teardown run
+ * from main's finally on every exit path.
  *
  * Why blocking: the application's own thread is the single thread of control for the
  * messaging data path. The main thread takes each request from the receiver and
@@ -101,17 +101,20 @@ public class DirectReplierBlocking {
     // PublisherOverflowException until there is room. Same unit and tuning as above.
     private static final int REPLY_BUFFER_CAPACITY = 1000;
     // terminate(gracePeriod): how long the buffered replies get to go out before the replier
-    // stops. In this blocking sample only the receive loop takes requests, and that loop has
-    // stopped by teardown: when requests still wait in the request buffer, terminate() waits
-    // the full grace period, then throws IncompleteMessageDeliveryException, and those
-    // requests are lost (at-most-once). A short grace period keeps that exit prompt.
+    // stops. The API applies the grace period to the request buffer first and to the reply
+    // buffer second, so terminate() can take up to two grace periods. Only the receive loop
+    // takes requests here, and that loop has stopped by teardown: when requests still wait in
+    // the request buffer, terminate() waits the full grace period for them, then throws
+    // IncompleteMessageDeliveryException, and those requests are lost (at-most-once). A short
+    // grace period keeps that exit prompt.
     private static final long TERMINATE_GRACE_PERIOD_MS = 1_000;
-    // how long the shutdown hook waits for main's teardown: one receive timeout, plus the
-    // grace period and a margin for the request in progress and the disconnect. The JVM
-    // halts when the hook returns.
-    private static final long SHUTDOWN_WAIT_MS = RECEIVE_TIMEOUT_MS + TERMINATE_GRACE_PERIOD_MS + 5_000;
+    // how long the shutdown hook waits for main's teardown: one receive timeout, plus two
+    // grace periods (one for each buffer) and a margin for the request in progress and the
+    // disconnect. The JVM halts when the hook returns.
+    private static final long SHUTDOWN_WAIT_MS = RECEIVE_TIMEOUT_MS + 2 * TERMINATE_GRACE_PERIOD_MS + 5_000;
 
     private static volatile int msgRecvCounter = 0;              // num requests received
+    private static volatile boolean hasDetectedDiscard = false;  // any discards seen?
     private static volatile boolean isShutdown = false;          // are we done?
     private static volatile boolean isShutdownSignalled = false; // SIGINT/SIGTERM started a JVM shutdown
     private static volatile boolean isMainDone = false;          // main finished its teardown
@@ -274,6 +277,10 @@ public class DirectReplierBlocking {
             if (now >= nextReport) {
                 trace(String.format("%s %s Requests/s: %,d",API,APP_NAME,msgRecvCounter));
                 msgRecvCounter = 0;
+                if (hasDetectedDiscard) {  // at least one request was dropped before this replier
+                    trace("*** Discard detected (at-most-once: a direct request was dropped) ***");
+                    hasDetectedDiscard = false;  // only show the warning once per report
+                }
                 nextReport = now + STATS_INTERVAL_MS;
             }
         }
@@ -283,11 +290,22 @@ public class DirectReplierBlocking {
      *  calls it on the main thread. The API catches and logs an exception that escapes it. */
     private static void processRequest(InboundMessage message, Replier replier) {
         msgRecvCounter++;
+        // at-most-once discard evidence (API reference): the broker sets the broker discard
+        // indication when it discarded direct messages destined for this replier for any reason
+        // (e.g. a slow consumer overran its egress buffer), and the API sets the internal one
+        // when its own request buffer dropped requests (back pressure, see
+        // RECEIVE_BUFFER_CAPACITY). The indication arrives on the next request received after
+        // the drop. There is NO redelivery: each dropped request times out at its requestor.
+        if (message.getMessageDiscardNotification().hasBrokerDiscardIndication()
+                || message.getMessageDiscardNotification().hasInternalDiscardIndication()) {
+            hasDetectedDiscard = true;
+        }
         // guard on the replier: the API passes null when the message has no reply-to
-        // destination, and such a message cannot be answered. The requestor samples set the
-        // reply-to automatically; a message arriving here without one is not a request.
+        // destination or no correlation id, and such a message cannot be answered. A
+        // request-reply publisher sets both automatically; a message arriving here without them
+        // is not a request.
         if (replier == null) {
-            logger.warn("Received a message on the request topic with no reply-to; ignoring.");
+            logger.warn("Received a message on the request topic with no reply-to or no correlation id; ignoring.");
             return;
         }
         final String msgId = message.getApplicationMessageId();
