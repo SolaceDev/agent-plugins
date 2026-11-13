@@ -121,8 +121,8 @@ public class DirectReplierBlocking {
     private static volatile int exitCode = 0;                    // set to 1 on a failure exit
     private static MessagingService messagingService;
     private static RequestReplyMessageReceiver receiver;
-    // one OutboundMessageBuilder for every reply; the per-reply difference goes in reply()'s
-    // additional message properties
+    // a single OutboundMessageBuilder reused for every reply; the per-reply difference goes in
+    // reply()'s additional message properties
     private static OutboundMessageBuilder replyBuilder;
 
     // remember to add log4j2.xml to your classpath

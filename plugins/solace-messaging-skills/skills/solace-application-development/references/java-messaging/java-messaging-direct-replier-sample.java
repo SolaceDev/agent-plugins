@@ -281,8 +281,8 @@ public class DirectReplier {
      *  Runs on an API thread: return promptly, since delivery stalls while it runs. **/
     private static class RequestHandler implements RequestMessageHandler {
 
-        // one OutboundMessageBuilder for every reply; the per-reply difference goes in
-        // reply()'s additional message properties
+        // a single OutboundMessageBuilder reused for every reply; the per-reply difference
+        // goes in reply()'s additional message properties
         private final OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
 
         @Override
