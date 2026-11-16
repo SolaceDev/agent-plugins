@@ -16,15 +16,18 @@ Elevated to documented best practices per the Python API developer guide:
 
 Reference sample. Wired for a basic direct request-reply journey on the requestor
 side, BLOCKING variant: basic-auth connect with a reconnection retry strategy, a
-RequestReplyMessagePublisher, one blocking publish_await_response() with a POSITIVE
-reply timeout, a PubSubTimeoutError catch with a single retry to absorb a cold-start
-race, reconnection and service interruption listeners registered BEFORE connect(),
-and a graceful SIGINT/SIGTERM shutdown. The blocking request IS the synchronization
-point: the requestor sends one request, waits for the correlated reply, and exits
-(0 on a reply or a shutdown signal, 1 without a reply). Request-reply in the Python API is direct only, so
-it is at-most-once on both legs. The non-blocking variant is
+RequestReplyMessagePublisher, several blocking publish_await_response() calls in
+sequence on the one connection, each with a POSITIVE reply timeout, a
+PubSubTimeoutError catch with a single retry to absorb a cold-start race,
+reconnection and service interruption listeners registered BEFORE connect(), and a
+graceful SIGINT/SIGTERM shutdown. The blocking request IS the synchronization point:
+only one request is outstanding at a time, each reply is processed before the next
+request goes out, and the requestor stops at the first request without a reply
+(exit code 0 when every request sent got its reply or on a shutdown signal, 1
+without a reply). Request-reply in the Python API is direct only, so it is
+at-most-once on both legs. The non-blocking variant is
 python-direct-requestor-sample.py. Structured as module-level functions,
-setup_solace(...), connect_solace(...), send_request(...), and teardown_solace(...),
+setup_solace(...), connect_solace(...), send_requests(...), and teardown_solace(...),
 that share one RequestorState; setup_solace() creates the service and the requestor
 before any connection exists, and main() runs teardown from its finally on every
 exit path after that.
@@ -69,6 +72,8 @@ APP_NAME = "DirectRequestorBlocking"
 # request topic the replier subscribes to; matches the direct replier sample
 REQUEST_TOPIC = "solace/samples/python/direct/request"
 API = "Python"
+# how many requests go out, one at a time
+REQUEST_COUNT = 5
 # POSITIVE reply timeout in MILLISECONDS: publish_await_response() blocks up to this long
 # for the correlated reply, then raises PubSubTimeoutError. The API has no default and
 # requires a positive value.
@@ -137,7 +142,7 @@ def main(args: list[str]) -> int:
     state = setup_solace(properties, shutdown)
     try:
         connect_solace(state)
-        send_request(state)
+        send_requests(state)
     finally:
         teardown_solace(state)
         trace("Main thread quitting.")
@@ -185,58 +190,79 @@ def connect_solace(state: RequestorState) -> None:
     state.requestor.start()  # raises IllegalStateError unless the service is connected
 
 
-def send_request(state: RequestorState) -> None:
-    # the request is an OutboundMessage: publish_await_response() takes no bare payload, so
-    # the message builder is required here. A bytearray payload travels as the binary
-    # attachment; the replier reads it back with get_payload_as_bytes()
-    request = state.messaging_service.message_builder().build(
-        bytearray(f"Request from {APP_NAME}".encode("utf-8")))
-    # an application message id lets the replier echo it onto the reply for traceability;
-    # the API does the request-reply correlation itself and does not need it
-    msg_id = str(uuid.uuid4())
+def send_requests(state: RequestorState) -> None:
+    # the requests are OutboundMessages: publish_await_response() takes no bare payload, so
+    # the message builder is required here. One builder serves every request; the
+    # per-request difference goes in publish_await_response()'s additional_message_properties
+    message_builder = state.messaging_service.message_builder()
     request_topic = Topic.of(REQUEST_TOPIC)
-    trace(f"{APP_NAME} sending a direct request to topic '{REQUEST_TOPIC}' (timeout {REQUEST_TIMEOUT_MS} ms).")
-    reply = None
-    for attempt in range(1, REQUEST_ATTEMPTS + 1):
+    trace(f"{APP_NAME} sending {REQUEST_COUNT} direct requests to topic '{REQUEST_TOPIC}', "
+          f"one at a time (timeout {REQUEST_TIMEOUT_MS} ms each).")
+    # one outstanding request at a time, on the one connection: each
+    # publish_await_response() returns its reply before the next request goes out. This is
+    # what the blocking call gives the application: its replies are processed in request
+    # order, with no ordering logic of its own. To chain requests, build the next request
+    # from the reply just received and send it to the next topic in the chain.
+    requests_sent = 0
+    replies = 0
+    for count in range(1, REQUEST_COUNT + 1):
         if state.shutdown.is_set():
             break  # a shutdown signal or a service interruption: send no further request
-        try:
-            # blocks until the correlated reply arrives or REQUEST_TIMEOUT_MS passes. A
-            # shutdown signal that arrives during the wait takes effect once the call
-            # returns, within REQUEST_TIMEOUT_MS.
-            reply = state.requestor.publish_await_response(
-                request_message=request,
-                request_destination=request_topic,
-                reply_timeout=REQUEST_TIMEOUT_MS,
-                additional_message_properties={message_properties.APPLICATION_MESSAGE_ID: msg_id},
-            )
-            break
-        except PubSubTimeoutError:
-            if attempt < REQUEST_ATTEMPTS:
-                logger.warning("Request timed out after %d ms; retrying once.", REQUEST_TIMEOUT_MS)
-            else:
-                logger.warning("Request timed out after %d ms on the retry; giving up.", REQUEST_TIMEOUT_MS)
-        except PubSubPlusClientError as error:
-            # the request could not be sent (for example the service is down); retrying would
-            # not help
-            logger.error("Request failed, quitting: %s", error)
-            break
+        # an application message id lets the replier echo it onto the reply for
+        # traceability; the API does the request-reply correlation itself and does not
+        # need it
+        msg_id = str(uuid.uuid4())
+        # a bytearray payload travels as the binary attachment; the replier reads it back
+        # with get_payload_as_bytes()
+        request = message_builder.build(bytearray(f"Request {count} from {APP_NAME}".encode("utf-8")))
+        requests_sent += 1
+        reply = None
+        for attempt in range(1, REQUEST_ATTEMPTS + 1):
+            if state.shutdown.is_set():
+                break  # a shutdown signal or a service interruption: do not retry
+            try:
+                # blocks until the correlated reply arrives or REQUEST_TIMEOUT_MS passes. A
+                # shutdown signal that arrives during the wait takes effect once the call
+                # returns, within REQUEST_TIMEOUT_MS.
+                reply = state.requestor.publish_await_response(
+                    request_message=request,
+                    request_destination=request_topic,
+                    reply_timeout=REQUEST_TIMEOUT_MS,
+                    additional_message_properties={message_properties.APPLICATION_MESSAGE_ID: msg_id},
+                )
+                break
+            except PubSubTimeoutError:
+                if attempt < REQUEST_ATTEMPTS:
+                    logger.warning("Request %d timed out after %d ms; retrying once.", count, REQUEST_TIMEOUT_MS)
+                else:
+                    logger.warning("Request %d timed out after %d ms on the retry; giving up.",
+                                   count, REQUEST_TIMEOUT_MS)
+            except PubSubPlusClientError as error:
+                # the request could not be sent (for example the service is down); retrying
+                # would not help
+                logger.error("Request %d failed, quitting: %s", count, error)
+                break
 
-    if reply is None:
-        if state.shutdown.is_set():
-            # a shutdown signal is a clean stop (exit 0); a service interruption has already
-            # set exit_code
-            trace(f"{API} {APP_NAME} stopped before a reply arrived.")
-        else:
-            trace(f"{API} {APP_NAME} received no reply.")
-            state.exit_code = 1
-        return
-    # the replier sample sends a bytearray payload (the binary attachment), read back with
-    # get_payload_as_bytes(); a str payload arrives via get_payload_as_string() instead.
-    # errors="replace" keeps a non-UTF-8 payload from raising
-    payload = reply.get_payload_as_bytes()
-    text = payload.decode("utf-8", errors="replace") if payload is not None else reply.get_payload_as_string()
-    trace(f"{API} {APP_NAME} received a correlated reply (message id {reply.get_application_message_id()}): {text}")
+        if reply is None:
+            # stop at the first request without a reply: in a chain, the next request depends
+            # on this reply
+            if state.shutdown.is_set():
+                # a shutdown signal is a clean stop (exit 0); a service interruption has
+                # already set exit_code
+                trace(f"{API} {APP_NAME} stopped before a reply arrived.")
+            else:
+                trace(f"{API} {APP_NAME} received no reply; no further request goes out.")
+                state.exit_code = 1
+            break
+        # the replier sample sends a bytearray payload (the binary attachment), read back
+        # with get_payload_as_bytes(); a str payload arrives via get_payload_as_string()
+        # instead. errors="replace" keeps a non-UTF-8 payload from raising
+        payload = reply.get_payload_as_bytes()
+        text = payload.decode("utf-8", errors="replace") if payload is not None else reply.get_payload_as_string()
+        trace(f"{API} {APP_NAME} received a correlated reply (message id {reply.get_application_message_id()}): {text}")
+        replies += 1
+
+    trace(f"{API} {APP_NAME} received {replies} of {requests_sent} replies.")
 
 
 def teardown_solace(state: RequestorState) -> None:
