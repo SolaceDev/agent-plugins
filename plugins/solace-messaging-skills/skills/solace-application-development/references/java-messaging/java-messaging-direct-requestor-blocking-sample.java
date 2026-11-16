@@ -18,17 +18,18 @@
  *     https://docs.solace.com/API/API-Developer-Guide-JCSMP/JCSMP-API-Best-Practices.md
  *
  * Reference sample. Wired for a basic direct request-reply journey on the requestor
- * side, BLOCKING variant: basic-auth connect, a RequestReplyMessagePublisher, one
- * blocking publishAwaitResponse() with a POSITIVE reply timeout, a
- * PubSubPlusClientException.TimeoutException catch, service event listeners
- * registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown. The blocking
- * request IS the synchronization point: the requestor sends one request, waits for
- * the correlated reply, and exits (0 on a reply, 1 on a timeout or a failed request).
- * There is no retry. Request-reply in the Java API is direct only, so it is
- * at-most-once on both legs. The non-blocking variant is
- * java-messaging-direct-requestor-sample.java. Structured as setupSolace(...),
- * sendRequest(), and teardownSolace(), with teardown run from main's finally on every
- * exit path.
+ * side, BLOCKING variant: basic-auth connect, a RequestReplyMessagePublisher, several
+ * blocking publishAwaitResponse() calls in sequence on the one connection, each with a
+ * POSITIVE reply timeout, a PubSubPlusClientException.TimeoutException catch, service
+ * event listeners registered BEFORE connect(), and a graceful SIGINT/SIGTERM shutdown.
+ * The blocking request IS the synchronization point: only one request is outstanding
+ * at a time, each reply is processed before the next request goes out, and the
+ * requestor stops at the first request without a reply (exit code 0 when every request
+ * sent got its reply, 1 on a timeout or a failed request). There is no retry.
+ * Request-reply in the Java API is direct only, so it is at-most-once on both legs.
+ * The non-blocking variant is java-messaging-direct-requestor-sample.java. Structured
+ * as setupSolace(...), sendRequests(), and teardownSolace(), with teardown run from
+ * main's finally on every exit path.
  *
  * Only practices documented in canonical Solace sources are encoded here.
  *
@@ -51,6 +52,7 @@ import com.solace.messaging.PubSubPlusClientException;
 import com.solace.messaging.config.SolaceProperties.TransportLayerProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.OutboundMessage;
+import com.solace.messaging.publisher.OutboundMessageBuilder;
 import com.solace.messaging.publisher.RequestReplyMessagePublisher;
 import com.solace.messaging.receiver.InboundMessage;
 import com.solace.messaging.resources.Topic;
@@ -61,6 +63,8 @@ public class DirectRequestorBlocking {
     // request topic the replier subscribes to; matches the direct replier samples
     private static final String REQUEST_TOPIC = "solace/samples/java/direct/request";
     private static final String API = "Java";
+    // how many requests go out, one at a time
+    private static final int REQUEST_COUNT = 5;
     // POSITIVE reply timeout in MILLISECONDS: publishAwaitResponse() blocks up to this long
     // for the correlated reply, then throws PubSubPlusClientException.TimeoutException. The
     // API has no default and requires a value of 1 or more. This value also bounds how long
@@ -107,7 +111,7 @@ public class DirectRequestorBlocking {
                     // nothing more we can do; the JVM is halting
                 }
             }));
-            sendRequest();
+            sendRequests();
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
@@ -177,42 +181,58 @@ public class DirectRequestorBlocking {
         requestor.start();
     }
 
-    private static void sendRequest() throws InterruptedException {
-        if (isShutdown) {  // a shutdown signal or a service interruption: send no request
-            return;
+    private static void sendRequests() throws InterruptedException {
+        // one OutboundMessageBuilder serves every request
+        OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
+        Topic requestTopic = Topic.of(REQUEST_TOPIC);
+        trace(String.format("%s sending %d direct requests to topic '%s', one at a time (timeout %d ms each).",
+                APP_NAME, REQUEST_COUNT, REQUEST_TOPIC, REQUEST_TIMEOUT_MS));
+        // one outstanding request at a time, on the one connection: each
+        // publishAwaitResponse() returns its reply before the next request goes out. This is
+        // what the blocking call gives the application: its replies are processed in request
+        // order, with no ordering logic of its own. To chain requests, build the next request
+        // from the reply just received and send it to the next topic in the chain.
+        int requestsSent = 0;
+        int replies = 0;
+        for (int count = 1; count <= REQUEST_COUNT && !isShutdown; count++) {  // a shutdown signal or a service interruption: send no further request
+            // an application message id lets the replier echo it onto the reply for
+            // traceability; the API does the request-reply correlation itself and does not
+            // need it. A byte[] payload travels as the binary attachment; the replier reads
+            // it back with getPayloadAsBytes()
+            OutboundMessage request = messageBuilder.withApplicationMessageId(UUID.randomUUID().toString())
+                    .build(("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
+            requestsSent++;
+            try {
+                // blocks until the correlated reply arrives or REQUEST_TIMEOUT_MS passes. A
+                // shutdown signal that arrives during the wait takes effect once the call
+                // returns, within REQUEST_TIMEOUT_MS. The call also declares the checked
+                // InterruptedException; nothing in this sample interrupts the main thread, so
+                // it propagates to main, which still runs teardownSolace() in its finally.
+                InboundMessage reply = requestor.publishAwaitResponse(request, requestTopic, REQUEST_TIMEOUT_MS);
+                // the replier samples send a byte[] payload (the binary attachment), read
+                // back with getPayloadAsBytes()
+                byte[] payload = reply.getPayloadAsBytes();
+                String text = payload != null ? new String(payload, StandardCharsets.UTF_8) : reply.getPayloadAsString();
+                trace(API + " " + APP_NAME + " received a correlated reply (message id "
+                        + reply.getApplicationMessageId() + "): " + text);
+                replies++;
+            } catch (PubSubPlusClientException.TimeoutException e) {
+                // no reply within REQUEST_TIMEOUT_MS: no replier answered, or the request or
+                // the reply was lost (at-most-once). A failure, not a silent retry: this is
+                // where an application adds its own retry policy. Stop here: in a chain, the
+                // next request depends on this reply.
+                logger.warn("Request " + count + " got no reply within " + REQUEST_TIMEOUT_MS
+                        + " ms; no further request goes out.");
+                exitCode = 1;
+                break;
+            } catch (RuntimeException e) {  // the request could not be sent: the service is down or the requestor is terminated
+                logger.error("### Caught while trying to requestor.publishAwaitResponse() for request "
+                        + count + ", quitting", e);
+                exitCode = 1;
+                break;
+            }
         }
-        // an application message id lets the replier echo it onto the reply for traceability;
-        // the API does the request-reply correlation itself and does not need it. A byte[]
-        // payload travels as the binary attachment; the replier reads it back with
-        // getPayloadAsBytes()
-        OutboundMessage request = messagingService.messageBuilder()
-                .withApplicationMessageId(UUID.randomUUID().toString())
-                .build(("Request from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
-        trace(String.format("%s sending a direct request to topic '%s' (timeout %d ms).",
-                APP_NAME, REQUEST_TOPIC, REQUEST_TIMEOUT_MS));
-        try {
-            // blocks until the correlated reply arrives or REQUEST_TIMEOUT_MS passes. A
-            // shutdown signal that arrives during the wait takes effect once the call
-            // returns, within REQUEST_TIMEOUT_MS. The call also declares the checked
-            // InterruptedException; nothing in this sample interrupts the main thread, so it
-            // propagates to main, which still runs teardownSolace() in its finally.
-            InboundMessage reply = requestor.publishAwaitResponse(request, Topic.of(REQUEST_TOPIC), REQUEST_TIMEOUT_MS);
-            // the replier samples send a byte[] payload (the binary attachment), read back
-            // with getPayloadAsBytes()
-            byte[] payload = reply.getPayloadAsBytes();
-            String text = payload != null ? new String(payload, StandardCharsets.UTF_8) : reply.getPayloadAsString();
-            trace(API + " " + APP_NAME + " received a correlated reply (message id "
-                    + reply.getApplicationMessageId() + "): " + text);
-        } catch (PubSubPlusClientException.TimeoutException e) {
-            // no reply within REQUEST_TIMEOUT_MS: no replier answered, or the request or the
-            // reply was lost (at-most-once). A failure, not a silent retry: this is where an
-            // application adds its own retry policy.
-            logger.warn("Request got no reply within " + REQUEST_TIMEOUT_MS + " ms.");
-            exitCode = 1;
-        } catch (RuntimeException e) {  // the request could not be sent: the service is down or the requestor is terminated
-            logger.error("### Caught while trying to requestor.publishAwaitResponse(), quitting", e);
-            exitCode = 1;
-        }
+        trace(String.format("%s %s received %d of %d replies.", API, APP_NAME, replies, requestsSent));
     }
 
     private static void teardownSolace() {

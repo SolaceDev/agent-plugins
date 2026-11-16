@@ -10,14 +10,16 @@
  * Reference sample. Wired for a basic direct request-reply journey on the
  * requestor side: basic-auth connect with reconnect-configured channel properties, a
  * started consumer (required before any request), a blocking session.createRequestor()
- * + requestor.request(requestMsg,
- * REQUEST_TIMEOUT_MS, topic) with a POSITIVE timeout, a JCSMPRequestTimeoutException
- * catch (with a single optional retry to absorb a cold-start race), and a self-exit
- * after the correlated reply. The blocking request IS the synchronization point;
- * there is no SIGINT hook (the requestor is a foreground process, waited on, never
- * SIGINTed). Direct request-reply is at-most-once on both legs. Structured as
- * setupSolace(...), sendRequest(), and teardownSolace(), with teardown run from
- * main's finally on every exit path.
+ * and several requestor.request(requestMsg, REQUEST_TIMEOUT_MS, topic) calls in
+ * sequence on the one session, each with a POSITIVE timeout, a
+ * JCSMPRequestTimeoutException catch (with a single optional retry to absorb a
+ * cold-start race), and a self-exit after the last reply. The blocking request IS the
+ * synchronization point: only one request is outstanding at a time, each reply is
+ * processed before the next request goes out, and the requestor stops at the first
+ * request without a reply. There is no SIGINT hook (the requestor is a foreground
+ * process, waited on, never SIGINTed). Direct request-reply is at-most-once on both
+ * legs. Structured as setupSolace(...), sendRequests(), and teardownSolace(), with
+ * teardown run from main's finally on every exit path.
  *
  * Only practices documented in canonical Solace sources are encoded here.
  *
@@ -58,6 +60,8 @@ public class DirectRequestor {
     // request topic the replier subscribes to; matches the direct replier sample
     private static final String REQUEST_TOPIC = "solace/samples/jcsmp/direct/request";
     private static final String API = "JCSMP";
+    // how many requests go out, one at a time
+    private static final int REQUEST_COUNT = 5;
     // POSITIVE blocking-request timeout in milliseconds: requestor.request(...) blocks up
     // to this long for the correlated reply before throwing JCSMPRequestTimeoutException.
     // A positive timeout is the direct reliability knob (NOT a burst).
@@ -73,7 +77,7 @@ public class DirectRequestor {
         trace(API + " " + APP_NAME + " initializing...");
         try {
             setupSolace(args);
-            sendRequest();
+            sendRequests();
         } finally {
             teardownSolace();
             trace("Main thread quitting.");
@@ -140,48 +144,63 @@ public class DirectRequestor {
         consumer.start();
     }
 
-    private static void sendRequest() throws JCSMPException {
-        // build the request and the request destination
+    private static void sendRequests() throws JCSMPException {
+        // build the request destination
         Topic requestTopic = JCSMPFactory.onlyInstance().createTopic(REQUEST_TOPIC);
-        // best practice: createMessage(...) makes a SESSION-INDEPENDENT message, the model
-        // Solace recommends for new Java applications (session-dependent messages are legacy).
-        BytesMessage requestMsg = JCSMPFactory.onlyInstance().createMessage(BytesMessage.class);
-        requestMsg.setData(("Request from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
-        // set an applicationMessageId so the reply can echo it back for traceability
-        requestMsg.setApplicationMessageId(UUID.randomUUID().toString());
-        trace(String.format("%s sending a direct request to topic '%s' (timeout %d ms).",
-                APP_NAME, REQUEST_TOPIC, REQUEST_TIMEOUT_MS));
-
         // session.createRequestor() handles the reply-to + correlation automatically; the
         // blocking requestor.request(...) sends the request and waits up to REQUEST_TIMEOUT_MS
         // for the correlated reply, throwing JCSMPRequestTimeoutException on timeout. This
         // is the DIRECT request-reply convenience, the inverse of the guaranteed requestor's
-        // temp-queue + blocking flow.receive(...).
+        // temp-queue + blocking flow.receive(...). One Requestor serves every request.
         Requestor requestor = session.createRequestor();
-        BytesXMLMessage replyMsg = null;
-        // optionally retry once on a request timeout to absorb a cold-start race (the
-        // direct reliability knob, D-06): the replier may not yet have propagated its
-        // subscription on the very first attempt.
-        for (int attempt = 1; attempt <= 2 && replyMsg == null; attempt++) {
-            try {
-                replyMsg = requestor.request(requestMsg, REQUEST_TIMEOUT_MS, requestTopic);
-            } catch (JCSMPRequestTimeoutException e) {
-                if (attempt < 2) {
-                    logger.warn("Request timed out after " + REQUEST_TIMEOUT_MS + " ms; retrying once.");
-                } else {
-                    logger.warn("Request timed out after " + REQUEST_TIMEOUT_MS + " ms on the retry; giving up.", e);
+        trace(String.format("%s sending %d direct requests to topic '%s', one at a time (timeout %d ms each).",
+                APP_NAME, REQUEST_COUNT, REQUEST_TOPIC, REQUEST_TIMEOUT_MS));
+        // one outstanding request at a time, on the one session: each requestor.request(...)
+        // returns its reply before the next request goes out. This is what the blocking call
+        // gives the application: its replies are processed in request order, with no ordering
+        // logic of its own. To chain requests, build the next request from the reply just
+        // received and send it to the next topic in the chain.
+        int requestsSent = 0;
+        int replies = 0;
+        for (int count = 1; count <= REQUEST_COUNT; count++) {
+            // best practice: createMessage(...) makes a SESSION-INDEPENDENT message, the model
+            // Solace recommends for new Java applications (session-dependent messages are
+            // legacy). A new message for each request: the Requestor sets the correlation id
+            // only on a message that has none.
+            BytesMessage requestMsg = JCSMPFactory.onlyInstance().createMessage(BytesMessage.class);
+            requestMsg.setData(("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
+            // set an applicationMessageId so the reply can echo it back for traceability
+            requestMsg.setApplicationMessageId(UUID.randomUUID().toString());
+            requestsSent++;
+            BytesXMLMessage replyMsg = null;
+            // optionally retry once on a request timeout to absorb a cold-start race (the
+            // direct reliability knob, D-06): the replier may not yet have propagated its
+            // subscription on the very first attempt.
+            for (int attempt = 1; attempt <= 2 && replyMsg == null; attempt++) {
+                try {
+                    replyMsg = requestor.request(requestMsg, REQUEST_TIMEOUT_MS, requestTopic);
+                } catch (JCSMPRequestTimeoutException e) {
+                    if (attempt < 2) {
+                        logger.warn("Request " + count + " timed out after " + REQUEST_TIMEOUT_MS + " ms; retrying once.");
+                    } else {
+                        logger.warn("Request " + count + " timed out after " + REQUEST_TIMEOUT_MS + " ms on the retry; giving up.", e);
+                    }
                 }
             }
-        }
 
-        if (replyMsg != null) {
+            if (replyMsg == null) {
+                // stop at the first request without a reply: in a chain, the next request
+                // depends on this reply
+                trace(API + " " + APP_NAME + " received no reply within the timeout; no further request goes out.");
+                break;
+            }
             // Payload lives in the binary attachment: write with setData(), read with getData().
             // NOT getBytes(), which reads the separate (here empty) XML-content part.
             final String reply = new String(((BytesMessage) replyMsg).getData(), StandardCharsets.UTF_8);
             trace(API + " " + APP_NAME + " received a correlated reply: " + reply);
-        } else {
-            trace(API + " " + APP_NAME + " received no reply within the timeout.");
+            replies++;
         }
+        trace(String.format("%s %s received %d of %d replies.", API, APP_NAME, replies, requestsSent));
     }
 
     private static void teardownSolace() {
