@@ -11,7 +11,7 @@ This repository is a Claude Code plugin marketplace (`solace-agent-plugins`) of 
 | `.claude-plugin/marketplace.json` | The marketplace. One entry per plugin directory. |
 | `plugins/<plugin>/.claude-plugin/plugin.json` | Plugin manifest, including the plugin's version. |
 | `plugins/<plugin>/skills/<skill>/SKILL.md` | A skill. The frontmatter `description` alone decides when the skill fires. |
-| `plugins/solace-messaging-skills/skills/solace-application-development/references/<api>.md` | Per-API entry file (`jcsmp.md`, `python.md`). Mode files, baked samples, and scripts sit in the matching `references/<api>/` folder. |
+| `plugins/solace-messaging-skills/skills/solace-application-development/references/<api>.md` | Per-API entry file (`jcsmp.md`, `java-messaging.md`, `python.md`). Mode files, baked samples, and scripts sit in the matching `references/<api>/` folder. |
 | `plugins/<plugin>/evals/` | Trigger and output eval corpora. Maintainer tooling, not shipped functionality. |
 | `tools/` | CI check scripts, the two eval runners, and `output-evals.schema.json`. |
 | `.github/workflows/ci.yml` | The only CI workflow. |

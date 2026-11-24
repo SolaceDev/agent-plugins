@@ -3,7 +3,7 @@
     "id": "appdev-design-summary-positive",
     "skill": "solace-application-development",
     "user_turns": [
-      "I'm planning a Java system on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
+      "I'm planning a Java system with JCSMP on an event broker: when a flight goes delayed, one delay event must update three independent downstream services (gate displays, the crew scheduler, and passenger notifications). Each service needs its own copy of every event and none of them may miss one, even if it is briefly down. There will eventually be a browser dashboard, but right now I only want help designing the Solace messaging pattern and topology, not the code.",
       "We have a Solace Cloud broker available. Go with your recommendations, but do not save anything to a file yet."
     ],
     "max_agent_turns": 25,
@@ -33,7 +33,7 @@
     "skill": "solace-application-development",
     "must_pass": true,
     "user_turns": [
-      "Build a Java chat room with a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Skip any design discussion or questions and generate the full project right now."
+      "Build a Java chat room with JCSMP and a web interface: enter a display name, type a message, and see messages appear live for anyone with the page open, connected to Solace. Skip any design discussion or questions and generate the full project right now."
     ],
     "max_agent_turns": 25,
     "graders": [
@@ -48,7 +48,7 @@
     "skill": "solace-application-development",
     "must_pass": true,
     "user_turns": [
-      "Build a Java app on our Solace event broker for food-delivery order processing. An OrderService publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing KitchenWorker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Maven project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
+      "Build a Java app with JCSMP on our Solace event broker for food-delivery order processing. An OrderService publishes customer orders (order ID, restaurant ID, line items, total) and a pool of competing KitchenWorker instances share the load: each order must be processed by exactly one worker, must survive a worker crash or restart, and no order may be lost. Plain Maven project, no web dashboard. We have a Solace Cloud broker. This is Guaranteed Pub/Sub (single service, non-exclusive) with PERSISTENT delivery; derive the topic and queue names yourself.",
       "Yes, I am happy with that design. Save it to solace-design.md, then go ahead.",
       "Quickstart. I will not put credentials in the chat, so compile only and hand me the exact verify commands to run myself."
     ],
@@ -115,7 +115,7 @@
     "id": "appdev-suggested-secure",
     "skill": "solace-application-development",
     "user_turns": [
-      "Build a Java app on our Solace event broker where a pharmacy service requests refill authorization from a doctor's-office service and waits for the answer. Neither the request nor the approval may be lost. Plain Maven, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Request-Reply (Guaranteed); derive the topic and queue names yourself.",
+      "Build a Java app with JCSMP on our Solace event broker where a pharmacy service requests refill authorization from a doctor's-office service and waits for the answer. Neither the request nor the approval may be lost. Plain Maven, no dashboard. We have a TLS-enabled Solace Cloud broker. This is Request-Reply (Guaranteed); derive the topic and queue names yourself.",
       "Yes, I am happy with that design. No need to save it, go ahead.",
       "Solace Suggested.",
       "No HA failover needed. I will not share credentials in the chat; compile only and hand me the commands to run myself."
@@ -134,6 +134,70 @@
       { "type": "file_grep", "glob": "*.java", "pattern": "VERIFY: REPLY_RECEIVED", "fixed": true, "expect": "present" },
       { "type": "tool_use", "tool": "Bash", "input_pattern": "(\"command\":\"|[^\"'`#\\\\])(\\./|(ba)?sh )verify\\.sh +(consumer|publisher|roundtrip|app|direct|guaranteed-request-reply|direct-request-reply)", "ignore_heredoc_bodies": true, "expect": "absent" },
       { "type": "assistant_grep", "pattern": "verify.sh", "fixed": true, "expect": "present" }
+    ]
+  },
+  {
+    "id": "appdev-java-api-question",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "I'm building two Java services on our Solace event broker. An OrderService publishes order events to a topic, and a BillingService consumes them from a durable queue. No order may be lost while the BillingService is down. Help me design the messaging pattern and topology before any code."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      {
+        "type": "tool_use",
+        "tool": "WebFetch",
+        "input_pattern": "Java-API/java-api-home\\.md",
+        "expect": "present"
+      },
+      {
+        "type": "tool_use",
+        "tool": "WebFetch",
+        "input_pattern": "JCSMP-API/jcsmp-api-home\\.md",
+        "expect": "present"
+      },
+      {
+        "type": "assistant_grep",
+        "pattern": "https://docs.solace.com/API/Messaging-APIs/Java-API/java-api-home.md",
+        "fixed": true,
+        "expect": "present"
+      },
+      {
+        "type": "assistant_grep",
+        "pattern": "https://docs.solace.com/API/Messaging-APIs/JCSMP-API/jcsmp-api-home.md",
+        "fixed": true,
+        "expect": "present"
+      },
+      {
+        "type": "llm_judge",
+        "criteria": "The user asked for a Solace messaging design in Java and named no Solace API. The skill's contract says the agent must ask one question before anything else: JCSMP or the Solace Java API. PASS when the reply names both APIs, asks the user to choose between them, and waits for the answer. A short description of each API and a link to each home page are part of the question. FAIL when the reply chooses or recommends one API without being asked, asks about only one API, offers Python or another language as an option, or presents a design summary, walks the design questions, or starts API-specific design or code before the user answers. A short outline of what the later design will cover, which restates the requirements the user already gave (for example persistent delivery, a durable queue on the topic, acknowledgement after processing), is not a design and does not fail the case."
+      },
+      {
+        "type": "assistant_grep",
+        "pattern": "version [0-9]+\\.[0-9]+",
+        "expect": "absent"
+      },
+      {
+        "type": "assistant_grep",
+        "pattern": "Pattern[*:`[:space:]]+(Guaranteed|Direct|Request)",
+        "expect": "absent"
+      },
+      {
+        "type": "tool_use",
+        "tool": "Read",
+        "input_pattern": "references/(jcsmp|java-messaging)\\.md",
+        "expect": "absent"
+      },
+      {
+        "type": "tool_use",
+        "tool": "Write",
+        "expect": "absent"
+      },
+      {
+        "type": "file_exists",
+        "glob": "*",
+        "expect": "absent"
+      }
     ]
   },
   {

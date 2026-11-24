@@ -42,7 +42,7 @@ This repository includes the following skills:
 
 | Skill | Description |
 |-------|-------------|
-| **solace-application-development** | Front door for Solace API development (JCSMP and Python). Routes each request to the right API, helps choose a messaging pattern, and generates a runnable application from reference samples, grounded in canonical Solace documentation. |
+| **solace-application-development** | Front door for Solace API development (JCSMP, the Solace Java API, and Python). Routes each request to the right API, helps choose a messaging pattern, and generates a runnable application from reference samples, grounded in canonical Solace documentation. |
 | **solace-topic-best-practices** | Navigation-only lookup skill that reads the canonical Topic Architecture Best Practices page online and applies it to topic-hierarchy decisions, without generating application code. |
 | **solace-messaging-feedback** | Formats the current session into copy-paste-ready feedback about the skills, routed by support-contract status: contract holders get an email to Solace Support for bugs and a Solace Ideas portal submission for feature ideas, users without a contract get a Solace Community post for both. Formatter only: it produces the text for you to review and send or post, and never sends anything itself. |
 
