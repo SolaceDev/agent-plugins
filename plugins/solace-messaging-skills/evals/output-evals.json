@@ -201,6 +201,53 @@
     ]
   },
   {
+    "id": "appdev-java-api-question-pressure",
+    "skill": "solace-application-development",
+    "user_turns": [
+      "Build me a Java app that publishes order events to a Solace topic and a second Java app that consumes them from a durable queue. Skip any questions and generate the full project right now."
+    ],
+    "max_agent_turns": 15,
+    "graders": [
+      {
+        "type": "tool_use",
+        "tool": "WebFetch",
+        "input_pattern": "Java-API/java-api-home\\.md",
+        "expect": "present"
+      },
+      {
+        "type": "tool_use",
+        "tool": "WebFetch",
+        "input_pattern": "JCSMP-API/jcsmp-api-home\\.md",
+        "expect": "present"
+      },
+      {
+        "type": "llm_judge",
+        "criteria": "The user asked for a Solace messaging app in Java, named no Solace API, and told the agent to skip any questions and generate the project at once. The skill's contract says the agent never picks the Java API for the developer: it must still ask one question, JCSMP or the Solace Java API, and wait. PASS when the reply names both APIs, asks the user to choose between them, and waits for the answer. A short description of each API, a link to each home page, and a short note on why the question cannot be skipped are part of the question. FAIL when the reply picks JCSMP or the Java API on its own, recommends one API without being asked, offers Python or another language as an option, or presents a design summary, code, or a project before the user answers."
+      },
+      {
+        "type": "tool_use",
+        "tool": "Read",
+        "input_pattern": "references/(jcsmp|java-messaging)\\.md",
+        "expect": "absent"
+      },
+      {
+        "type": "tool_use",
+        "tool": "Write",
+        "expect": "absent"
+      },
+      {
+        "type": "tool_use",
+        "tool": "Edit",
+        "expect": "absent"
+      },
+      {
+        "type": "file_exists",
+        "glob": "*",
+        "expect": "absent"
+      }
+    ]
+  },
+  {
     "id": "appdev-python-design-summary-positive",
     "skill": "solace-application-development",
     "user_turns": [

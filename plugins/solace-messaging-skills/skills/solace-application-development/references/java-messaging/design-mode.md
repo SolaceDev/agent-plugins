@@ -55,8 +55,8 @@ Questions 3 and 4 apply ONLY on the guaranteed publish/subscribe branch. Request
 
 The tree resolves to exactly five leaves. Spell the chosen leaf in the summary exactly as written here; these strings are the contract Implement mode reads.
 
-- **Request-Reply (Direct)** GENERATED. Request-reply over direct messaging.
-- **Direct Pub/Sub** GENERATED. Publish/subscribe over direct messaging, fire-and-forget.
+- **Request-Reply (Direct)** DESIGN ONLY. Request-reply over direct messaging.
+- **Direct Pub/Sub** DESIGN ONLY. Publish/subscribe over direct messaging, fire-and-forget.
 - **Guaranteed Pub/Sub (single service, exclusive)** GENERATED. One durable queue, exclusive access, one active consumer at a time.
 - **Guaranteed Pub/Sub (single service, non-exclusive)** GENERATED. One durable queue, non-exclusive access, competing workers share the load.
 - **Guaranteed Pub/Sub (fan-out)** SNIPPET. One durable queue plus a topic subscription per independent consuming service. Implement mode reuses the single-service guaranteed generator, so there is no dedicated fan-out sample; the leaf is realized by repeating the single-service queue-and-subscription setup once per consuming service.

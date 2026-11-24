@@ -199,7 +199,7 @@ The Java API does not bundle a verify script yet, so Implement mode ends in the 
 
 - **Improvised verdicts.** A connect that does not throw, or a `publish()` call that returns, proves nothing about the round trip. Judge only by the markers in each class's output.
 - **JCSMP code in a Java API project.** Never import `com.solacesystems.jcsmp` types, never build a `JCSMPSession`, and never declare `sol-jcsmp`. The Java API classes live under `com.solace.messaging`.
-- **Publishing direct-to-queue instead of pub/sub.** Publish to a topic; let the durable queue carry a topic subscription. See [Creating Queues with the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Create-Queues.md).
+- **Publishing direct-to-queue instead of pub/sub.** Publish to a topic; let the durable queue carry a topic subscription. See [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Publish.md).
 - **DIRECT delivery where Guaranteed is required.** Use the persistent publisher for the guaranteed pub/sub journey. See [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Publish.md).
 - **`disconnect()` before `terminate()`.** Terminate the publisher or the receiver with its grace period first, as the samples do; the samples' comments state that `disconnect()` stops them at once and discards their buffers.
 - **Hardcoded credentials.** Never inline the host, VPN, username, or password. Every class builds its properties through the shared helper.
@@ -215,12 +215,12 @@ Step 4 writes the tailored `solace-verification-checklist.md` into the generated
 **Delivered by this generation**
 
 - Basic-auth connection through the shared `SolaceConnectionConfig` helper; credentials live only in a gitignored `config.json`. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Java/Java-Messaging-Service.md)
-- Service reconnection and interruption listeners registered before `connect()`. [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Java/Java-Messaging-Service.md)
+- Service reconnection and interruption listeners registered before `connect()`. [Java API reference](https://docs.solace.com/API-Developer-Online-Ref-Documentation/pubsubplus-java/overview-summary.md)
 - Persistent publish to a topic with a publish receipt listener; a NACK is logged with the message id. [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Publish.md)
 - Capacity-bounded back pressure on the publisher (`onBackPressureWait`). [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Publish.md)
 - Durable queue plus topic subscription provisioned at start (`CREATE_ON_START`), with the access type from the design summary (one durable queue per consuming service on fan-out). [Creating Queues with the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Create-Queues.md)
 - Client acknowledgement only after processing. [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Subscribe.md)
-- Graceful SIGINT/SIGTERM shutdown: `terminate(gracePeriod)` and then `disconnect()` on every exit path. [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Subscribe.md)
+- Graceful SIGINT/SIGTERM shutdown: `terminate(gracePeriod)` and then `disconnect()` on every exit path. [Java API reference](https://docs.solace.com/API-Developer-Online-Ref-Documentation/pubsubplus-java/overview-summary.md)
 - log4j2 logging with the `log4j-jcl` bridge and a console `log4j2.xml`; the API's own loggers are not silenced. [Configuring Logging in the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Logging.md)
 
 **Your responsibility (not delivered here)**
