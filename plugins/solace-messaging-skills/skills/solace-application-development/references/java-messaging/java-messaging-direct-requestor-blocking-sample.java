@@ -49,6 +49,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.PubSubPlusClientException;
+import com.solace.messaging.config.SolaceProperties.MessageProperties;
 import com.solace.messaging.config.SolaceProperties.TransportLayerProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.OutboundMessage;
@@ -199,8 +200,12 @@ public class DirectRequestorBlocking {
             // traceability; the API does the request-reply correlation itself and does not
             // need it. A byte[] payload travels as the binary attachment; the replier reads
             // it back with getPayloadAsBytes()
-            OutboundMessage request = messageBuilder.withApplicationMessageId(UUID.randomUUID().toString())
-                    .build(("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
+            final Properties messageProperties = new Properties();
+            messageProperties.setProperty(MessageProperties.APPLICATION_MESSAGE_ID,
+                    UUID.randomUUID().toString());
+            OutboundMessage request = messageBuilder.build(
+                    ("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8),
+                    messageProperties);
             requestsSent++;
             try {
                 // blocks until the correlated reply arrives or REQUEST_TIMEOUT_MS passes. A
