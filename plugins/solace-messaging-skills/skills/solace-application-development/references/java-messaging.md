@@ -50,6 +50,7 @@ Java API grounding. Each page below is a live `docs.solace.com` `.md` URL, WebFe
 - [Java API Developer Guide](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Dev-Guide.md): the index of the developer guide pages.
 - [Messaging Service](https://docs.solace.com/API/API-Developer-Guide-Java/Java-Messaging-Service.md): the `Properties` object, building and connecting the `MessagingService`, authentication, and the configuration profiles.
 - [Publishing Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Publish.md) and [Consuming Persistent Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-PM-Subscribe.md): the guaranteed pub/sub pages.
+- [Publishing Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-DM-Publish.md) and [Consuming Direct Messages](https://docs.solace.com/API/API-Developer-Guide-Java/Java-DM-Subscribe.md): the direct pub/sub pages.
 - [Creating Queues with the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Create-Queues.md): queue provisioning from the client.
 - [Request-Reply Messaging in the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Request-Reply.md): request-reply with `RequestReplyMessagePublisher` and `RequestReplyMessageReceiver`.
 - [Configuring Logging in the Solace Java API](https://docs.solace.com/API/API-Developer-Guide-Java/Java-API-Logging.md): the logging frameworks and their dependencies.
@@ -67,9 +68,15 @@ Live exceptions (these have no `docs.solace.com` `.md` form; use the live URL di
 
 - `java-messaging/prerequisites.md`: broker acquisition, the supported JDK versions, and Maven (route here first if the developer has no reachable broker).
 - `java-messaging/design-mode.md`: choose and confirm the messaging pattern and topology before any code is generated; every new build without a design contract routes here first.
-- `java-messaging/implement-mode.md`: generate a runnable Maven Java API project from a confirmed design; its Step 4 dispatches onto the per-leaf wiring file below. In this release it generates the Guaranteed Pub/Sub leaves on the Quickstart door.
+- `java-messaging/implement-mode.md`: generate a runnable Maven Java API project from a confirmed design; its Step 4 dispatches onto the per-leaf wiring files below, and its Step 0 door question selects one of the two overlays below.
+- `java-messaging/solace-suggested-mode.md`: the Solace Suggested overlay (TLS, DMQ eligibility, HA failover, bounded back pressure, two separate projects); read from implement-mode Step 0 on the Solace Suggested door.
+- `java-messaging/custom-mode.md`: the Custom overlay (an a la carte checklist of the Solace Suggested settings, the admin-provisioned queue, and the blocking shapes); read from implement-mode Step 0 on the Custom door.
 - `java-messaging/implement-guaranteed-pubsub.md`: the Guaranteed Pub/Sub leaf wiring (read from implement-mode Step 4).
+- `java-messaging/implement-direct-pubsub.md`: the Direct Pub/Sub leaf wiring (read from implement-mode Step 4).
+- `java-messaging/implement-request-reply.md`: the Request-Reply (Direct) leaf wiring (read from implement-mode Step 4).
 - `java-messaging/java-messaging-guaranteed-publisher-sample.java`: best-practices publisher sample (basic-auth connect, PERSISTENT publish to a topic, publish receipt handling, bounded back pressure, graceful shutdown).
 - `java-messaging/java-messaging-guaranteed-subscriber-sample.java`: best-practices receiver sample (provisions a durable queue plus a topic subscription, CLIENT-ack receiver with `receiveAsync()`).
 - `java-messaging/java-messaging-solace-connection-config.java`: the shared connection-config helper every generated app uses.
-- `java-messaging/java-messaging-guaranteed-publisher-blocking-sample.java`, `java-messaging/java-messaging-guaranteed-subscriber-blocking-sample.java`, and the `java-messaging/java-messaging-direct-*-sample.java` files: the blocking and the direct samples. No wiring file reads them in this release; do not adapt them by hand (`java-messaging/implement-mode.md` Step 4).
+- `java-messaging/java-messaging-direct-publisher-sample.java` and `java-messaging/java-messaging-direct-subscriber-sample.java`: the Direct Pub/Sub samples (at-most-once publish with a failure listener; a direct topic subscription with discard detection).
+- `java-messaging/java-messaging-direct-requestor-blocking-sample.java`, `java-messaging/java-messaging-direct-requestor-sample.java`, and `java-messaging/java-messaging-direct-replier-sample.java`: the Request-Reply (Direct) samples (the blocking requestor is the default; the non-blocking requestor is a design variant).
+- `java-messaging/java-messaging-guaranteed-publisher-blocking-sample.java`, `java-messaging/java-messaging-guaranteed-subscriber-blocking-sample.java`, `java-messaging/java-messaging-direct-subscriber-blocking-sample.java`, and `java-messaging/java-messaging-direct-replier-blocking-sample.java`: the blocking samples. A leaf file reads one only for a ticked Custom knob (`java-messaging/custom-mode.md`).
