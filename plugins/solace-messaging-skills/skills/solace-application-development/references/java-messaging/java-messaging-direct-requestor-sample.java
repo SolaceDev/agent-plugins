@@ -52,6 +52,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.PubSubPlusClientException;
+import com.solace.messaging.config.SolaceProperties.MessageProperties;
 import com.solace.messaging.config.SolaceProperties.TransportLayerProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.OutboundMessage;
@@ -208,8 +209,11 @@ public class DirectRequestor {
             String msgId = UUID.randomUUID().toString();
             // a byte[] payload travels as the binary attachment; the replier reads it back
             // with getPayloadAsBytes()
-            OutboundMessage request = messageBuilder.withApplicationMessageId(msgId)
-                    .build(("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8));
+            final Properties messageProperties = new Properties();
+            messageProperties.setProperty(MessageProperties.APPLICATION_MESSAGE_ID, msgId);
+            OutboundMessage request = messageBuilder.build(
+                    ("Request " + count + " from " + APP_NAME).getBytes(StandardCharsets.UTF_8),
+                    messageProperties);
             try {
                 // the message id goes in as the user context: the API hands it back to the
                 // reply handler with the result of this request, so the handler can name the

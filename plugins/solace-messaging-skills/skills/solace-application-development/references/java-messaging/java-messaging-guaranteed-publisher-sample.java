@@ -50,6 +50,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.PubSubPlusClientException;
+import com.solace.messaging.config.SolaceProperties.MessageProperties;
 import com.solace.messaging.config.SolaceProperties.TransportLayerProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.OutboundMessage;
@@ -229,8 +230,9 @@ public class GuaranteedPublisher {
             String msgId = UUID.randomUUID().toString();
             // a byte[] payload travels as the binary attachment; consumers read it back
             // with getPayloadAsBytes()
-            OutboundMessage message = messageBuilder.withApplicationMessageId(msgId)  // as an example
-                    .build(payload);
+            final Properties messageProperties = new Properties();
+            messageProperties.setProperty(MessageProperties.APPLICATION_MESSAGE_ID, msgId);  // as an example
+            OutboundMessage message = messageBuilder.build(payload, messageProperties);
             String topicString = new StringBuilder(TOPIC_PREFIX).append(API.toLowerCase())
                     .append("/pers/pub/").append(chosenCharacter).toString();
             // NOTE: publishing to topic, so make sure the consumer's queue is subscribed to the same topic,

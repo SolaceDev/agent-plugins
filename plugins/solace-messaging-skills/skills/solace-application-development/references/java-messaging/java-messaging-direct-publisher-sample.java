@@ -50,6 +50,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.PubSubPlusClientException;
+import com.solace.messaging.config.SolaceProperties.MessageProperties;
 import com.solace.messaging.config.SolaceProperties.TransportLayerProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.DirectMessagePublisher;
@@ -221,8 +222,10 @@ public class DirectPublisher {
             Arrays.fill(payload,(byte)chosenCharacter);  // fill the payload completely with that char
             // a byte[] payload travels as the binary attachment; consumers read it back
             // with getPayloadAsBytes()
-            OutboundMessage message = messageBuilder.withApplicationMessageId(UUID.randomUUID().toString())  // as an example
-                    .build(payload);
+            final Properties messageProperties = new Properties();
+            messageProperties.setProperty(MessageProperties.APPLICATION_MESSAGE_ID,
+                    UUID.randomUUID().toString());  // as an example
+            OutboundMessage message = messageBuilder.build(payload, messageProperties);
             String topicString = new StringBuilder(TOPIC_PREFIX).append(API.toLowerCase())
                     .append("/direct/pub/").append(chosenCharacter).toString();
             try {
