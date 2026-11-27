@@ -34,7 +34,7 @@ If a row matches, or if your own judgment maps an unmatched prompt cleanly to on
 
 **Unclear path (no stated intent).** When the prompt states no usable intent, walk all four tree questions in Step 2 order to reach a leaf.
 
-**No threading question.** The generated shape is always the non-blocking one: the non-blocking `publish()` with a publish receipt listener, and `receiveAsync()` with a message handler. Do not ask the developer to choose a threading model, and do not add a threading field to the summary. When a prompt asks for the blocking shape (a blocking publish that waits for each acknowledgement, or a loop that pulls each message), say in one line that this release generates the non-blocking shape only, and continue with the design.
+**No threading question.** The base generated shape is the non-blocking one on the pub/sub leaves (the non-blocking `publish()`, and `receiveAsync()` with a message handler), and the blocking requestor on Request-Reply (Direct). Do not ask the developer to choose a threading model, and do not add a threading field to the summary. When a prompt asks for a blocking shape (a blocking publish that waits for each acknowledgement, or a loop that pulls each message), say in one line that the Custom door in Implement mode offers the blocking publish and receive shapes, and continue with the design. When a request-reply prompt needs many requests in flight at once, record the non-blocking requestor as a variant in the `Consumption endpoint` field: `API-managed reply (RequestReplyMessagePublisher, non-blocking publish)`.
 
 **Variant of a leaf (the prompt states a requirement the base shape does not meet).** A leaf is a pattern FAMILY, not a fixed topology. Alongside the intent match, read the prompt for reliability or topology requirements that the chosen leaf's DEFAULT shape does not satisfy (for example "the consumer must dedupe redeliveries"). When you find one, the leaf still resolves to one of the five strings verbatim, but the design is a VARIANT of that leaf: its default sample shape is adapted to meet the requirement. Do not discard the requirement to fit the default shape, and do not treat a legitimate variant as off-catalog. Name the deviation in the same one-line confirm and carry the actual topology into the Step 4 summary. Keep a variant within the same pattern family and to topology or reliability knobs the canonical docs ground; if a requirement leaves the Solace topic and queue publish and subscribe model, or needs behavior the docs cannot ground, say so and treat it as off-catalog rather than inventing it.
 
@@ -55,13 +55,11 @@ Questions 3 and 4 apply ONLY on the guaranteed publish/subscribe branch. Request
 
 The tree resolves to exactly five leaves. Spell the chosen leaf in the summary exactly as written here; these strings are the contract Implement mode reads.
 
-- **Request-Reply (Direct)** DESIGN ONLY. Request-reply over direct messaging.
-- **Direct Pub/Sub** DESIGN ONLY. Publish/subscribe over direct messaging, fire-and-forget.
+- **Request-Reply (Direct)** GENERATED. Request-reply over direct messaging, with the blocking requestor by default.
+- **Direct Pub/Sub** GENERATED. Publish/subscribe over direct messaging, fire-and-forget.
 - **Guaranteed Pub/Sub (single service, exclusive)** GENERATED. One durable queue, exclusive access, one active consumer at a time.
 - **Guaranteed Pub/Sub (single service, non-exclusive)** GENERATED. One durable queue, non-exclusive access, competing workers share the load.
 - **Guaranteed Pub/Sub (fan-out)** SNIPPET. One durable queue plus a topic subscription per independent consuming service. Implement mode reuses the single-service guaranteed generator, so there is no dedicated fan-out sample; the leaf is realized by repeating the single-service queue-and-subscription setup once per consuming service.
-
-Design mode confirms and saves any of the five leaves. In this release Implement mode generates the three Guaranteed Pub/Sub leaves only (`implement-mode.md` Step 4); say so in one line when the design resolves to one of the two direct leaves, so the developer knows before the close-out.
 
 Inside the guaranteed publish/subscribe single-service leaf, the exclusive versus non-exclusive choice is realized as a queue-factory SNIPPET, not a separate sample: the same generated app builds an exclusive or a non-exclusive durable queue based on the developer's answer to question 4.
 
